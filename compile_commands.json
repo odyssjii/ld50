@@ -1,0 +1,8 @@
+[
+    {
+        "directory": "~/dev/ld50/code",
+        "command": "/usr/bin/clang -std=c11 -g ld50.c -o build/ld50 -Weverything -Wno-missing-braces -Wno-disabled-macro-expansion -Wno-c++98-compat -Wno-switch -Wno-unused-macros -Wno-unused-const-variable -lsdl2 -lsdl2_ttf  -I /usr/local/Cellar/sdl2/2.0.14_1/include/SDL2/ -I /usr/local/Cellar/sdl2_ttf/2.0.15/include/SDL2/ -L /usr/local/Cellar/sdl2/2.0.14_1/lib/ -L /usr/local/Cellar/sdl2_ttf/2.0.15/lib",
+        "file": "ld50.c"
+    },
+]
+
