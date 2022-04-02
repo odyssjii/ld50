@@ -4,18 +4,6 @@
 
 
 
-/*
-
-  Seed + Water => Food
-
-
-  Worm[Seed, Seed] => Gem1
-  Word[Seed, Food] => Gem2
-  Word[Food, Food] => Gem3
-
- */
-
-
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +11,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <math.h>
+#include <complex.h>
 
 #include "imp_sdl.h"
 
@@ -56,7 +45,9 @@ typedef u32 b32;
 #define SMALL_FONT_SIZE 16
 #define MAX_ENTITY_COUNT 128
 #define MAX_ENTITY_PART_COUNT 32
-
+#define AUDIO_SAMPLE_COUNT 1024
+#define TUNNEL_SEGMENT_COUNT 1024
+#define TUNNEL_SEGMENT_THICKNESS 10
 
 #define ARRAY_COUNT(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -344,6 +335,21 @@ struct track_event {
 	uint8_t a;
 	uint8_t b;
 	uint8_t c;
+	uint8_t d;
+};
+
+struct track {
+	struct track_event *events;
+	u32 event_count;
+	u32 current_event;
+	f32 last_event_time;
+	u8 last_event_status;
+	u8 pad[3];
+};
+
+struct tunnel_segment {
+	u16 left;
+	u16 right;
 };
 
 struct game_state {
@@ -406,19 +412,19 @@ struct game_state {
 
 	b32 game_over;
 
-	b32 pad_;
 	const char *level_instr;
 
-	struct track_event *track_events;
-	u32 track_event_count;
-	u32 track_event_current;
-	f32 last_track_event_time;
-	u8 last_track_event_status;
+	f32 last_audio_mix[AUDIO_SAMPLE_COUNT];
+	f32 audio_mix_sample[AUDIO_SAMPLE_COUNT];
 
-	
+	struct track tracks[2];
+	u32 track_count;
 
-	f32 last_audio_mix[1024];
-	f32 audio_mix_sample[1024];
+	u32 current_tunnel_segment;
+	struct tunnel_segment tunnel_segments[TUNNEL_SEGMENT_COUNT];
+
+	f32 current_tunnel_depth;
+	f32 next_tunnel_depth;
 
 	/* u32 note_wave_number[128]; */
 };
@@ -673,6 +679,8 @@ draw_string(SDL_Renderer *renderer,
 	SDL_Color sdl_color =  { color.r, color.g, color.b, color.a };
 	SDL_Surface *surface = TTF_RenderText_Solid(font, text, sdl_color);
 	SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+	SDL_FreeSurface(surface);
 
 	SDL_Rect rect;
 	rect.y = y;
@@ -690,8 +698,12 @@ draw_string(SDL_Renderer *renderer,
 		break;
 	}
 
+	if (false)
+		printf("[%d, %d] -> [%d, %d, %d, %d]\n", surface->w, surface->h, rect.x, rect.y, rect.w, rect.h);
+
 	SDL_RenderCopy(renderer, texture, 0, &rect);
-	SDL_FreeSurface(surface);
+	SDL_RenderDrawPoint(renderer, 0, 0);
+
 	SDL_DestroyTexture(texture);
 }
 
@@ -819,9 +831,8 @@ static void
 special_fill_cell_(SDL_Renderer *renderer,
 		  u8 value, u8 alpha, s32 x, s32 y, s32 w, s32 h)
 {
-	if (w < 80) {
+	if (w < 40) {
 		fill_cell_(renderer, value, alpha, x, y, w, h);
-		return;
 	} else if (w < 120) {
 		struct color c = BASE_COLORS[value];
 		c.a = alpha;
@@ -1301,6 +1312,10 @@ goto_level(struct game_state *game, u32 level)
 	game->spawn_bag_count = 0;
 	game->spawn_bag_offset = 0;
 
+	push_spawn_item(game, ENTITY_PLAYER, 0, 0);
+	game->level_instr = "KICK ASS";
+	f32 level_length = 1000;
+#if 0
 	f32 level_length = 45;
 	if (level == 0) {
 		push_spawn_item(game, ENTITY_PLAYER, 0, 0);
@@ -1397,7 +1412,7 @@ goto_level(struct game_state *game, u32 level)
 		game->game_over = true;
 		game->level_instr = 0;
 	}
-
+#endif
 	game->current_level = level;
 	game->last_level_end_t = game->level_end_t;
 
@@ -1540,6 +1555,8 @@ spawn_next(struct game_state *game)
 static bool
 check_win_condition(struct game_state *game)
 {
+	return false;
+#if 0
 	u32 socket_count = 0;
 	for (u32 i = 0; i < game->spawn_bag_count; ++i)
 		if (game->spawn_bag[i].type == ENTITY_SOCKET)
@@ -1550,6 +1567,7 @@ check_win_condition(struct game_state *game)
 			--socket_count;
 
 	return socket_count == 0;
+#endif
 }
 
 static void
@@ -1568,6 +1586,21 @@ run_level_scenario_control(struct game_state *game)
 	}
 
 	spawn_next(game);
+
+	for (u32 i = 0; i < 1; ++i) {
+		game->current_tunnel_segment = (game->current_tunnel_segment + 1) & (TUNNEL_SEGMENT_COUNT - 1);
+
+		f32 t = (f32)game->current_tunnel_segment / 10;
+
+		f32 depth = game->current_tunnel_depth;
+		game->tunnel_segments[game->current_tunnel_segment].left = (u16)((sinf(t) + 2) * depth);
+		game->tunnel_segments[game->current_tunnel_segment].right = (u16)((sinf(t + 3.14f) + 2) * depth);
+
+		if (fabsf(game->current_tunnel_depth - game->next_tunnel_depth) < 0.001f) {
+			game->next_tunnel_depth = random_f32() * 200;
+		}
+		game->current_tunnel_depth += (game->next_tunnel_depth - game->current_tunnel_depth) * 0.1f;
+	}
 }
 
 static struct entity *
@@ -1597,16 +1630,16 @@ apply_user_input(struct game_state *game, const struct input_state *input)
 		struct entity_part *root = player->parts;
 
 		if (input->left)
-			root->a.x -= 2;
+			root->a.x -= 8;
 
 		if (input->right)
-			root->a.x += 2;
+			root->a.x += 8;
 
 		if (input->up)
-			root->a.y -= 2;
+			root->a.y -= 8;
 
 		if (input->down)
-			root->a.y += 2;
+			root->a.y += 8;
 
 		s32 mouse_x, mouse_y;
 		u32 mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
@@ -1818,7 +1851,7 @@ update_spring_physics(struct game_state *game)
 				part->a = add_v2(part->a, scale_v2(d, force / part->mass));
 				parent->a = add_v2(parent->a, scale_v2(d, -force / parent->mass));
 			}
-			part->a = sub_v2(part->a, scale_v2(part->v, 0.2f));
+			part->a = sub_v2(part->a, scale_v2(part->v, 0.6f));
 		}
 	}
 }
@@ -1922,16 +1955,16 @@ update_newtonian_physics(struct game_state *game)
 			struct entity_part *part = entity->parts + part_index;
 			struct v2 orig_new_v = add_v2(part->v, part->a);
 			struct v2 new_v = orig_new_v;
-			if (len_v2(new_v) > 10)
-				new_v = scale_v2(normalize_v2(new_v), 10);
+			if (len_v2(new_v) > 20)
+				new_v = scale_v2(normalize_v2(new_v), 20);
 
 			struct v2 new_p = add_v2(part->p, new_v);
 
 			if (entity->z > 1)
 				check_for_collisions_against_entities(game, entity, part, &new_p, new_v);
 
-			if (len_v2(new_v) > 10)
-				new_v = scale_v2(normalize_v2(new_v), 10);
+			if (len_v2(new_v) > 20)
+				new_v = scale_v2(normalize_v2(new_v), 20);
 
 			if (!entity->fixed) {
 				part->p = new_p;
@@ -2085,8 +2118,138 @@ process_triggered_events(struct game_state *game)
 }
 
 static void
+play_track(struct game_state *game, struct track *track)
+{
+	SDL_LockAudioDevice(1);
+
+	struct track_event e = track->events[track->current_event];
+	f32 t = game->time;
+	f32 next_t = track->last_event_time + (f32)e.t / 900.0f;
+	if (t >= next_t) {
+		game->noise_wave_count = 0;
+		if (e.a < 0x80) {
+			if (track->last_event_status <= 0x8f) {
+				for (u32 wave_index = 0; wave_index < game->saw_wave_count; ++wave_index) {
+					struct waveform *wave = game->saw_waves + wave_index;
+
+					if (wave->tag == e.a) {
+						game->saw_waves[wave_index] = game->saw_waves[--game->saw_wave_count];
+						break;
+					}
+				}
+			} else if (track->last_event_status <= 0x9f) {
+				struct waveform *wave = game->saw_waves + (game->saw_wave_count++);
+				wave->tag = e.a;
+				wave->freq = (u16)(440 * pow(2, ((f64)e.a - 69.0) / 12.0));
+				wave->amp = e.b / 127.0f;
+			}
+		} else {
+			if (e.a < 0x8f) {
+				for (u32 wave_index = 0; wave_index < game->saw_wave_count; ++wave_index) {
+					struct waveform *wave = game->saw_waves + wave_index;
+
+					if (wave->tag == e.b) {
+						game->saw_waves[wave_index] = game->saw_waves[--game->saw_wave_count];
+						break;
+					}
+				}
+			} else if (e.a < 0x9f) {
+				struct waveform *wave = game->saw_waves + (game->saw_wave_count++);
+				wave->tag = e.b;
+				wave->freq = (u16)(440 * pow(2, ((f64)e.b - 69.0) / 12.0));
+				wave->amp = e.c / 127.0f;
+
+				struct waveform *noise = game->noise_waves + (game->noise_wave_count++);
+				noise->amp = 0.5f;
+
+			}
+
+			track->last_event_status = e.a;
+		}
+
+		track->current_event = (track->current_event + 1) % track->event_count;
+		track->last_event_time = next_t;
+	}
+
+	SDL_UnlockAudioDevice(1);
+}
+
+
+static void
+_fft(double complex buf[], double complex out[], int n, int step)
+{
+	if (step < n) {
+		_fft(out, buf, n, step * 2);
+		_fft(out + step, buf + step, n, step * 2);
+
+		for (int i = 0; i < n; i += 2 * step) {
+			double complex t = cexp(-(double complex)I * 3.14 * i / n) * out[i + step];
+			buf[i / 2]     = out[i] + t;
+			buf[(i + n)/2] = out[i] - t;
+		}
+	}
+}
+
+static void
+fft(double complex buf[], double complex tmp[],  int n)
+{
+	for (int i = 0; i < n; i++)
+		tmp[i] = buf[i];
+
+	_fft(buf, tmp, n, 1);
+}
+
+static void
 update_audio(struct game_state *game)
 {
+	play_track(game, game->tracks);
+
+	if (false) {
+		static const s32 mix_length = ARRAY_COUNT(game->last_audio_mix);
+		double complex buf[ARRAY_COUNT(game->last_audio_mix)];
+		double complex tmp[ARRAY_COUNT(game->last_audio_mix)];
+		for (u32 i = 0; i < mix_length; ++i)
+			buf[i] =  game->last_audio_mix[i];
+
+		fft(buf, tmp, mix_length);
+
+		/* f64 length = (f64)AUDIO_SAMPLE_COUNT / AUDIO_FREQ; */
+		u32 fft_length = AUDIO_SAMPLE_COUNT / 4;
+		for (u32 i = 0; i < fft_length; ++i) {
+			f32 v = 2 * (f32)(cabs(buf[i] / AUDIO_SAMPLE_COUNT));
+			if (v > 1)
+				v = 1;
+			if (v < -1)
+				v = -1;
+
+			/* f32 v = game->last_audio_mix[i]; */
+			f32 c = game->audio_mix_sample[i];
+			game->audio_mix_sample[i] = v;
+			game->audio_mix_sample[i] = c + (v - c * 0.1f);
+		}
+	} else {
+		for (u32 i = 0; i < AUDIO_SAMPLE_COUNT; ++i) {
+			f32 v = game->last_audio_mix[i];
+			f32 c = game->audio_mix_sample[i];
+			game->audio_mix_sample[i] = c + (v - c * 0.1f);
+		}
+	}
+
+	/* game->sine_wave_count = 3; */
+	/* game->sine_waves[0].amp = 1; */
+	/* game->sine_waves[0].freq = 880; */
+
+	/* game->sine_waves[1].amp = 0.7f; */
+	/* game->sine_waves[1].freq = 440; */
+
+	/* game->sine_waves[2].amp = 0.4f; */
+	/* game->sine_waves[2].freq = 50; */
+
+	/* game->sine_wave_count = 1; */
+	/* game->sine_waves->amp = 1; */
+	/* game->sine_waves->freq = 440; */
+
+#if 0
 	if (game->time > game->next_note_t) {
 		game->next_note_t += 4;
 		if (game->note == 40)
@@ -2145,6 +2308,7 @@ update_audio(struct game_state *game)
 	game->sine_wave_count = wave_index;
 	game->saw_wave_count = wave_index;
 	SDL_UnlockAudioDevice(1);
+#endif
 }
 
 static s32
@@ -2191,94 +2355,9 @@ make_lightning_to_point(struct game_state *game, SDL_Renderer *renderer, struct 
 }
 
 static void
-run_audio_test(struct game_state *game)
-{
-	SDL_LockAudioDevice(1);
-	/* game->saw_wave_count = 1; */
-
-	struct track_event e = game->track_events[game->track_event_current];
-	f32 t = game->time;
-	f32 next_t = game->last_track_event_time + (f32)e.t / 800.0f;
-	if (t >= next_t) {
-		game->noise_wave_count = 0;
-		if (e.a < 0x80) {
-			/* u8 channel = game->last_track_event_status - 0x90 + 1; */
-			/* struct waveform *saw = game->saw_waves + channel; */
-			/* if (channel > game->saw_wave_count) */
-			/* 	game->saw_wave_count = channel; */
-
-			if (game->last_track_event_status <= 0x8f) {
-				for (u32 wave_index = 0; wave_index < game->saw_wave_count; ++wave_index) {
-					struct waveform *wave = game->saw_waves + wave_index;
-
-					if (wave->tag == e.a) {
-						game->saw_waves[wave_index] = game->saw_waves[--game->saw_wave_count];
-						break;
-					}
-				}
-			} else if (game->last_track_event_status <= 0x9f) {
-				struct waveform *wave = game->saw_waves + (game->saw_wave_count++);
-				wave->tag = e.a;
-				wave->freq = (u16)(440 * pow(2, ((f64)e.a - 69.0) / 12.0));
-				wave->amp = e.b / 127.0f;
-			}
-			/* saw->amp = e.b; */
-		} else {
-			if (e.a < 0x8f) {
-				/* u8 channel = e.a - 0x90 + 1; */
-				/* struct waveform *saw = game->saw_waves + channel; */
-				/* if (channel > game->saw_wave_count) */
-				/* 	game->saw_wave_count = channel; */
-
-				for (u32 wave_index = 0; wave_index < game->saw_wave_count; ++wave_index) {
-					struct waveform *wave = game->saw_waves + wave_index;
-
-					if (wave->tag == e.b) {
-						game->saw_waves[wave_index] = game->saw_waves[--game->saw_wave_count];
-						break;
-					}
-				}
-
-				/* saw->freq = (u16)(440 * pow(2, ((f64)e.b - 69.0) / 12.0)); */
-				/* saw->amp = e.c; */
-			} else if (e.a < 0x9f) {
-				/* u8 channel = e.a - 0x90 + 1; */
-				/* struct waveform *saw = game->saw_waves + channel; */
-				/* if (channel > game->saw_wave_count) */
-				/* 	game->saw_wave_count = channel; */
-
-				struct waveform *wave = game->saw_waves + (game->saw_wave_count++);
-				wave->tag = e.b;
-				wave->freq = (u16)(440 * pow(2, ((f64)e.b - 69.0) / 12.0));
-				wave->amp = e.c / 127.0f;
-
-				struct waveform *noise = game->noise_waves + (game->noise_wave_count++);
-				noise->amp = 0.5f;
-
-			}
-
-			game->last_track_event_status = e.a;
-		}
-
-		game->track_event_current = (game->track_event_current + 1) % game->track_event_count;
-		game->last_track_event_time = next_t;
-	}
-
-	SDL_UnlockAudioDevice(1);
-}
-
-
-static void
 update_game(struct game_state *game,
             const struct input_state *input)
 {
-	run_audio_test(game);
-
-	/* game->sine_wave_count = 1; */
-	/* game->sine_waves->freq = 440; */
-	/* game->sine_waves->amp = 1; */
-
-#if 0
 	begin_game_frame(game);
 
 	/* NOTE(omid): Run level scenario and timings. */
@@ -2303,51 +2382,79 @@ update_game(struct game_state *game,
 	update_audio(game);
 
 	qsort(game->entity_index_by_z, game->entity_count, sizeof(u32), sort_entity_indices_by_z);
-#endif
+
 }
 
 static void
-render_game(struct game_state *game,
-            SDL_Renderer *renderer,
-            TTF_Font *font,
-	    TTF_Font *small_font)
+render_audio_spectrum(struct game_state *game,
+		      SDL_Renderer *renderer)
 {
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 	SDL_RenderClear(renderer);
 
-	struct color white = color(0xFF, 0xFF, 0xFF, 0xFF);
-
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
 	/* SDL_LockAudioDevice(1); */
-	for (u32 i = 0; i < ARRAY_COUNT(game->last_audio_mix); ++i) {
-		f32 v = game->last_audio_mix[i];
+
+	static const s32 mix_length = ARRAY_COUNT(game->last_audio_mix);
+	double complex buf[ARRAY_COUNT(game->last_audio_mix)];
+	double complex tmp[ARRAY_COUNT(game->last_audio_mix)];
+	for (u32 i = 0; i < mix_length; ++i)
+		buf[i] =  game->last_audio_mix[i];
+
+	fft(buf, tmp, mix_length);
+
+	/* f64 length = (f64)AUDIO_SAMPLE_COUNT / AUDIO_FREQ; */
+	u32 fft_length = AUDIO_SAMPLE_COUNT / 4;
+	for (u32 i = 0; i < fft_length; ++i) {
+		f32 v = 2 * (f32)(cabs(buf[i] / AUDIO_SAMPLE_COUNT));
+		if (v > 1)
+			v = 1;
+		if (v < -1)
+			v = -1;
+
+		/* f32 v = game->last_audio_mix[i]; */
 		f32 c = game->audio_mix_sample[i];
-		game->audio_mix_sample[i] = c + (v - c) * 0.5f;
+		game->audio_mix_sample[i] = v;
+		game->audio_mix_sample[i] = c + (v - c * 0.1f);
 	}
 
-	s32 mix_length = ARRAY_COUNT(game->last_audio_mix);
-	f32 width = (f32)WINDOW_WIDTH / (f32)mix_length;
-	for (s32 i = 0; i < mix_length; ++i) {
+	f32 width = (f32)WINDOW_WIDTH / (f32)fft_length;
+	for (s32 i = 0; i < (s32)fft_length; ++i) {
 		f32 v = game->audio_mix_sample[i];
 		s32 x = (s32)(width * (f32)i);
 		s32 h = (s32)(v * WINDOW_HEIGHT / 20.0f) + 1;
 		s32 w = (s32)(roundf(width)) + 1;
 
 		for (s32 y = 0; y < 10; ++y) {
-			f32 s = y / 9.0f;
+			f32 s = (f32)y / 9.0f;
 			struct color c = color((u8)(s * s * s * 0xFF), (u8)(s * s * 0xFF), (u8)(s * 0xFF), 0xFF);
 
 			fill_rect(renderer, x, WINDOW_HEIGHT / 2 - y * h, w, h, c);
 		}
 	}
+
 	/* SDL_UnlockAudioDevice(1); */
 
 	SDL_RenderPresent(renderer);
 }
 
+/* static void */
+/* render_game(struct game_state *game, */
+/*             SDL_Renderer *renderer, */
+/*             TTF_Font *font, */
+/* 	    TTF_Font *small_font) */
+/* { */
+/* 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); */
+/* 	SDL_RenderClear(renderer); */
+
+/* 	struct color white = color(0xFF, 0xFF, 0xFF, 0xFF); */
+
+/* 	SDL_RenderPresent(renderer); */
+/* } */
+
 static void
-render_game_(struct game_state *game,
+render_game(struct game_state *game,
             SDL_Renderer *renderer,
             TTF_Font *font,
 	    TTF_Font *small_font)
@@ -2366,165 +2473,239 @@ render_game_(struct game_state *game,
 	f32 len_o = len_v2(o) + 100;
 
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_RenderSetScale(renderer, 1, 1);
+
+	if (false){
+		for (s32 i = 1; i < 3; ++i)
+			fill_rect(renderer, i * 101, i * 101, 100, 100, color(0xff, 0xff, 0xff, 0x80));
+	}
 
 	/* NOTE(omid): Render tunnel. */
-	{
+	if (true) {
 		f32 fade_progress = 1.0f;
 		if (game->time < game->level_begin_t) {
 			f32 tunnel_d = game->level_begin_t - game->tunnel_begin_t;
 			fade_progress = (game->time - game->tunnel_begin_t) / tunnel_d;
 		}
+		fade_progress = 1.0f;
 
-		SDL_RenderSetScale(renderer, fade_progress, fade_progress);
+		u32 visible_count = WINDOW_HEIGHT / TUNNEL_SEGMENT_THICKNESS;
 
-		f32 initial_r = len_o * level_progress * level_progress;
-		f32 r = initial_r;
-		f32 a = 0.25f * game->time;
-		while (r < game->tunnel_size) {
-			struct v2 p = add_v2(o, v2(r * cosf(a), r * sinf(a)));
+		for (u32 i = 0; i < visible_count; ++i) {
+			u32 segment_index = (game->current_tunnel_segment - i) & (TUNNEL_SEGMENT_COUNT - 1);
+			struct tunnel_segment segment = game->tunnel_segments[segment_index];
 
-			u8 max_alpha = (u8)(0xE0 * sqrtf(r / len_o));
-			u8 alpha = max_alpha;
-			if (game->time < game->level_begin_t)
-				alpha = (u8)(max_alpha * fade_progress);
+			f32 r = 0;
+			f32 w = 20;
+			while (r < segment.left) {
+				w = ((f32)segment.left - r) / 4.0f;
+				if (w < 20)
+					w = 20;
 
-			#if 0
-			special_fill_cell_(renderer, (u8)(game->current_level + 1), alpha, (s32)p.x, (s32)p.y, (s32)(r / 5.0f), (s32)(r / 5.0f));
-			#else
-			struct v2 sp = add_v2(p, scale_v2(screen_center, (1 - fade_progress) / fade_progress));
-			u8 c = (u8)(game->current_level + 9) % ARRAY_COUNT(BASE_COLORS);
-			special_fill_cell_(renderer, c, alpha, (s32)sp.x, (s32)sp.y, (s32)(r / 5.0f), (s32)(r / 5.0f));
-			#endif
+				u8 max_alpha = (u8)(0xE0 * sqrtf(r / len_o));
+				u8 alpha = max_alpha;
+				if (game->time < game->level_begin_t)
+					alpha = (u8)(max_alpha * fade_progress);
+
+				struct v2 sp = v2(r, (f32)TUNNEL_SEGMENT_THICKNESS * (f32)i);
+				u8 c = (u8)(game->current_level + 9) % ARRAY_COUNT(BASE_COLORS);
+				struct color color = BASE_COLORS[c];
+				color.a = alpha;
+				/* render_rect(renderer, color, (s32)sp.x, (s32)sp.y, (s32)w, TUNNEL_SEGMENT_THICKNESS, false); */
+				special_fill_cell_(renderer, c, alpha, (s32)sp.x, (s32)sp.y, (s32)w, TUNNEL_SEGMENT_THICKNESS);
+				r += w;
+			}
+
+			if (true) {
+				f32 v = fabsf(game->audio_mix_sample[segment_index % AUDIO_SAMPLE_COUNT]);
+				s32 y = (s32)(TUNNEL_SEGMENT_THICKNESS * i);
+				s32 h = TUNNEL_SEGMENT_THICKNESS; /* (s32)(v * WINDOW_HEIGHT / 20.0f) + 1; */
+				f32 total_width = v * 50;
+				f32 segment_width = total_width / 10;
+
+				for (s32 x = 0; x < 10; ++x) {
+					f32 s = (f32)x / 9.0f;
+					struct color c = color((u8)(s * s * s * 0xFF), (u8)(s * s * 0xFF), (u8)(s * 0xFF), 0xFF);
+					fill_rect(renderer, (s32)(segment.left + (f32)x * segment_width), y, (s32)(segment_width), h, c);
+				}
+			}
+
+			r = 0;
+			while (r < segment.right) {
+				w = (segment.right - r) / 4.0f;
+				if (w < 20)
+					w = 20;
 
 
-			/* r += 0.5f; */
-			r += 0.25f + sqrtf(r - initial_r) * 0.01f;
-			a += sqrtf(r - initial_r) * 0.1f;
+				u8 max_alpha = (u8)(0xE0 * sqrtf(r / len_o));
+				u8 alpha = max_alpha;
+				if (game->time < game->level_begin_t)
+					alpha = (u8)(max_alpha * fade_progress);
+				alpha = 0xff;
+
+				struct v2 sp = v2(WINDOW_WIDTH - r, (f32)TUNNEL_SEGMENT_THICKNESS * (f32)i);
+				u8 c = (u8)(game->current_level + 9) % ARRAY_COUNT(BASE_COLORS);
+								struct color color = BASE_COLORS[c];
+				color.a = alpha;
+				special_fill_cell_(renderer, c, alpha, (s32)sp.x, (s32)sp.y, (s32)w, TUNNEL_SEGMENT_THICKNESS);
+				r += w;
+			}
+
+			if (true) {
+				f32 v = fabsf(game->audio_mix_sample[segment_index % AUDIO_SAMPLE_COUNT]);
+				s32 y = (s32)(TUNNEL_SEGMENT_THICKNESS * i);
+				s32 h = TUNNEL_SEGMENT_THICKNESS; /* (s32)(v * WINDOW_HEIGHT / 20.0f) + 1; */
+				f32 total_width = v * 50;
+				f32 segment_width = total_width / 10;
+
+				for (s32 x = 0; x < 10; ++x) {
+					f32 s = (f32)x / 9.0f;
+					struct color c = color((u8)(s * s * s * 0xFF), (u8)(s * s * 0xFF), (u8)(s * 0xFF), 0xFF);
+					fill_rect(renderer, (s32)(WINDOW_WIDTH - segment.right - (f32)(x + 1) * segment_width), y, (s32)(segment_width), h, c);
+				}
+			}
+
 		}
-
-		SDL_RenderSetScale(renderer, 1, 1);
 	}
 
 	/* NOTE(omid): Render shadows. */
-	for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
-		const struct entity *entity = game->entities + entity_index;
-		for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
-			const struct entity_part *part = entity->parts + part_index;
-			const struct entity_part *parent = entity->parts + part->parent_index;
+	if (false) {
+		for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
+			const struct entity *entity = game->entities + entity_index;
+			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
+				const struct entity_part *part = entity->parts + part_index;
+				const struct entity_part *parent = entity->parts + part->parent_index;
 
-			struct v2 ep = parent->p;
-			struct v2 pp = part->p;
+				struct v2 ep = parent->p;
+				struct v2 pp = part->p;
 
-			struct v2 from_c = sub_v2(ep, o);
-			f32 dist_to_center = len_v2(from_c);
-			f32 scale = 2 * dist_to_center / len_o;
+				struct v2 from_c = sub_v2(ep, o);
+				f32 dist_to_center = len_v2(from_c);
+				f32 scale = 2 * dist_to_center / len_o;
 
-			struct v2 offset = scale_v2(normalize_v2(from_c), 30);
-			struct v2 shadow = add_v2(pp, offset);
+				struct v2 offset = scale_v2(normalize_v2(from_c), 30);
+				struct v2 shadow = add_v2(pp, offset);
 
-			u8 max_alpha = (u8)(0xE0 * sqrtf(dist_to_center / len_o));
-			u8 alpha = max_alpha;
-			if (game->time < game->level_begin_t) {
-				f32 tunnel_d = game->level_begin_t - game->tunnel_begin_t;
-				f32 fade_progress = (game->time - game->tunnel_begin_t) / tunnel_d;
-				alpha = (u8)(max_alpha * fade_progress);
+				u8 max_alpha = (u8)(0xE0 * sqrtf(dist_to_center / len_o));
+				u8 alpha = max_alpha;
+				if (game->time < game->level_begin_t) {
+					f32 tunnel_d = game->level_begin_t - game->tunnel_begin_t;
+					f32 fade_progress = (game->time - game->tunnel_begin_t) / tunnel_d;
+					alpha = (u8)(max_alpha * fade_progress);
+				}
+
+				struct color c = color(0x00, 0x00, 0x00, alpha);
+				render_rect(renderer, c, (s32)shadow.x, (s32)shadow.y, (s32)(part->render_size * scale), (s32)(part->render_size * scale), false);
 			}
-
-			struct color c = color(0x00, 0x00, 0x00, alpha);
-			render_rect(renderer, c, (s32)shadow.x, (s32)shadow.y, (s32)(part->render_size * scale), (s32)(part->render_size * scale), false);
 		}
 	}
 
 	/* NOTE(omid): Render entities. */
-	/* for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) { */
-	for (u32 sort_list_index = 0; sort_list_index < game->entity_count; ++sort_list_index) {
-		u32 entity_index = game->entity_index_by_z[sort_list_index];
-		const struct entity *entity = game->entities + entity_index;
+	if (true) {
+		for (u32 sort_list_index = 0; sort_list_index < game->entity_count; ++sort_list_index) {
+			u32 entity_index = game->entity_index_by_z[sort_list_index];
+			const struct entity *entity = game->entities + entity_index;
 
-		for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
-			const struct entity_part *part = entity->parts + (entity->part_count - part_index - 1);
+			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
+				const struct entity_part *part = entity->parts + (entity->part_count - part_index - 1);
 
 
 
-			struct v2 part_p = part->p;
+				struct v2 part_p = part->p;
 #if 0
-			const struct entity_part *parent = entity->parts + part->parent_index;
-			struct v2 parent_p = parent->p;
-			struct v2 d = sub_v2(part_p, parent_p);
-			u32 chain_count = (u32)(part->length / 20);
+				const struct entity_part *parent = entity->parts + part->parent_index;
+				struct v2 parent_p = parent->p;
+				struct v2 d = sub_v2(part_p, parent_p);
+				u32 chain_count = (u32)(part->length / 20);
 #endif
 
-			u16 depth = compute_entity_part_depth(entity, part);
-			f32 z = entity->z - depth * 0.02f;
-			if (z < 0)
-				z = 0;
+				u16 depth = compute_entity_part_depth(entity, part);
+				f32 z = entity->z - depth * 0.02f;
+				if (z < 0)
+					z = 0;
 
-			if (z > 1) {
+				if (z > 1) {
 #if 0
-				for (u32 chain_index = 1; chain_index < chain_count; ++chain_index) {
-					f32 r = (f32)chain_index / (f32)chain_count;
-					struct v2 p = add_v2(parent_p, scale_v2(d, r));
-					fill_cell(renderer, 3, (s32)p.x, (s32)p.y, 12, 12);
-				}
+					for (u32 chain_index = 1; chain_index < chain_count; ++chain_index) {
+						f32 r = (f32)chain_index / (f32)chain_count;
+						struct v2 p = add_v2(parent_p, scale_v2(d, r));
+						fill_cell(renderer, 3, (s32)p.x, (s32)p.y, 12, 12);
+					}
 #endif
 
-				u8 alpha = part->max_alpha ? part->max_alpha : 0xFF;
+					u8 alpha = part->max_alpha ? part->max_alpha : 0xFF;
 
-				fill_cell_(renderer, (u8)part->color, alpha, (s32)part_p.x, (s32)part_p.y, (s32)part->render_size, (s32)part->render_size);
+					u8 c = (u8)part->color;
 
-				if (part->content) {
-					fill_cell_(renderer, part->content, alpha, (s32)part_p.x, (s32)part_p.y, 10, 10);
-					draw_cell(renderer, 0, (s32)part_p.x, (s32)part_p.y, 10, 10);
+					u32 segment_1 = (u32)(part_p.y / TUNNEL_SEGMENT_THICKNESS);
+					u32 segment_2 = segment_1 + 1;
+
+					struct tunnel_segment s1 = game->tunnel_segments[(game->current_tunnel_segment - segment_1) & (TUNNEL_SEGMENT_COUNT - 1)];
+					struct tunnel_segment s2 = game->tunnel_segments[(game->current_tunnel_segment - segment_2) & (TUNNEL_SEGMENT_COUNT - 1)];
+
+					f32 left = part_p.x - part->render_size / 2;
+					f32 right = part_p.x + part->render_size / 2;
+					if (left < s1.left || right > (WINDOW_WIDTH - s1.right))
+						c = 3;
+					else if (left < s2.left || right > (WINDOW_WIDTH - s2.right))
+						c = 3;
+
+					fill_cell_(renderer, c, alpha, (s32)part_p.x, (s32)part_p.y, (s32)part->render_size, (s32)part->render_size);
+
+					if (part->content) {
+						fill_cell_(renderer, part->content, alpha, (s32)part_p.x, (s32)part_p.y, 10, 10);
+						draw_cell(renderer, 0, (s32)part_p.x, (s32)part_p.y, 10, 10);
+					}
+
+					if (part->accept) {
+						fill_cell_(renderer, part->accept, 200, (s32)part_p.x, (s32)(part_p.y - part->render_size / 2.0f), (s32)part->render_size, 10);
+					}
+
+				} else {
+					u8 max_alpha = (u8)(0xE0);
+					u8 alpha = (u8)(max_alpha * z);
+
+					SDL_RenderSetScale(renderer, z, z);
+					s32 size = (s32)(part->render_size);
+					special_fill_cell_(renderer, (u8)(part->color), alpha, (s32)(part_p.x / z), (s32)(part_p.y / z), size, size);
+					SDL_RenderSetScale(renderer, 1, 1);
 				}
-
-				if (part->accept) {
-					fill_cell_(renderer, part->accept, 200, (s32)part_p.x, (s32)(part_p.y - part->render_size / 2.0f), (s32)part->render_size, 10);
-
-				}
-
-			} else {
-				u8 max_alpha = (u8)(0xE0);
-				u8 alpha = (u8)(max_alpha * z);
-
-				SDL_RenderSetScale(renderer, z, z);
-				s32 size = (s32)(part->render_size);
-				special_fill_cell_(renderer, (u8)(part->color), alpha, (s32)(part_p.x / z), (s32)(part_p.y / z), size, size);
-				SDL_RenderSetScale(renderer, 1, 1);
 			}
 		}
 	}
 
+	if (false) {
+		u32 sockets[MAX_ENTITY_COUNT] = { 0 };
+		u32 socket_count = 0;
+		for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
+			const struct entity *entity = game->entities + entity_index;
+			if (entity->type & ENTITY_SOCKET)
+				sockets[socket_count++] = entity_index;
+		}
 
-	u32 sockets[MAX_ENTITY_COUNT] = { 0 };
-	u32 socket_count = 0;
-	for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
-		const struct entity *entity = game->entities + entity_index;
-		if (entity->type & ENTITY_SOCKET)
-			sockets[socket_count++] = entity_index;
-	}
-
-	for (u32 socket_index = 0; socket_index < socket_count; ++socket_index) {
-		 struct entity *e1 = game->entities + sockets[socket_index];
-		 if (!e1->parts->content)
-			continue;
-
-		make_lightning_to_point(game, renderer, e1, screen_center);
-
-		for (u32 other_socket_index = 0; other_socket_index < socket_count; ++other_socket_index) {
-			if (other_socket_index == socket_index)
+		for (u32 socket_index = 0; socket_index < socket_count; ++socket_index) {
+			struct entity *e1 = game->entities + sockets[socket_index];
+			if (!e1->parts->content)
 				continue;
 
-			 struct entity *e2 = game->entities + sockets[other_socket_index];
+			make_lightning_to_point(game, renderer, e1, screen_center);
 
-			if (!e2->parts->content)
-				continue;
+			for (u32 other_socket_index = 0; other_socket_index < socket_count; ++other_socket_index) {
+				if (other_socket_index == socket_index)
+					continue;
 
-			make_lightning_to_point(game, renderer, e1, e2->parts->p);
+				struct entity *e2 = game->entities + sockets[other_socket_index];
+
+				if (!e2->parts->content)
+					continue;
+
+				make_lightning_to_point(game, renderer, e1, e2->parts->p);
+			}
 		}
 	}
 
-
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+	SDL_RenderPresent(renderer);
 
 	/* NOTE(omid): Render on-screen text. */
 
@@ -2582,22 +2763,32 @@ render_game_(struct game_state *game,
 	}
 
 
-#if 0
 	s32 y = 5 + SMALL_FONT_SIZE;
 
-	for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
-		const struct entity *entity = game->entities + entity_index;
-		draw_string_f(renderer, small_font, 5, y, TEXT_ALIGN_LEFT, white, "E (%u): HAS TARGET? %s [(%f, %f) * %f]", entity_index, entity->has_target ? "YES" : "NO", (f64)entity->target.x, (f64)entity->target.y, (f64)entity->pull_of_target);
-		y += SMALL_FONT_SIZE;
+	if (false) {
+		for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
+			const struct entity *entity = game->entities + entity_index;
+			draw_string_f(renderer, small_font, 5, y, TEXT_ALIGN_LEFT, white, "E (%u): HAS TARGET? %s [(%f, %f) * %f]", entity_index, entity->has_target ? "YES" : "NO", (f64)entity->target.x, (f64)entity->target.y, (f64)entity->pull_of_target);
+			y += SMALL_FONT_SIZE;
 
-		for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
-			const struct entity_part *part = entity->parts + (entity->part_count - part_index - 1);
-			draw_string_f(renderer, small_font, 25, y, TEXT_ALIGN_LEFT, white, "E (%u, %u): (%f, %f)", entity_index, part_index, (f64)part->p.x, (f64)part->p.y);
+			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
+				const struct entity_part *part = entity->parts + (entity->part_count - part_index - 1);
+				draw_string_f(renderer, small_font, 25, y, TEXT_ALIGN_LEFT, white, "E (%u, %u): (%f, %f)", entity_index, part_index, (f64)part->p.x, (f64)part->p.y);
+				y += SMALL_FONT_SIZE;
+			}
+		}
+	}
+
+	if (false) {
+		u32 visible_count = WINDOW_HEIGHT / TUNNEL_SEGMENT_THICKNESS;
+
+		for (u32 i = 0; i < visible_count; ++i) {
+			u32 segment_index = (game->current_tunnel_segment - i) & (TUNNEL_SEGMENT_COUNT - 1);
+			struct tunnel_segment segment = game->tunnel_segments[segment_index];
+			draw_string_f(renderer, small_font, 25, y, TEXT_ALIGN_LEFT, white, "SEGMENT: %u, %u", segment.left, segment.right);
 			y += SMALL_FONT_SIZE;
 		}
 	}
-#endif
-
 
 	SDL_RenderPresent(renderer);
 }
@@ -2618,7 +2809,6 @@ mix_audio(void *state, Uint8 *stream, int len)
 			struct waveform *wave = game->sine_waves + wave_index;
 			f32 w = sinf(2.0f * 3.14f * wave->freq * t) * wave->amp;
 			mix += w;
-			/* wave->t += wave->freq; */
 		}
 
 		for (u32 wave_index = 0; wave_index < game->saw_wave_count; ++wave_index) {
@@ -2632,11 +2822,10 @@ mix_audio(void *state, Uint8 *stream, int len)
 
 		for (u32 wave_index = 0; wave_index < game->noise_wave_count; ++wave_index) {
 			struct waveform *wave = game->noise_waves + wave_index;
-			f32 w = wave->amp * random_f32();
+			f32 w = wave->amp * (2 * random_f32() - 1);
 
 			mix += w;
 		}
-
 
 		if (mix < -1.0f)
 			mix = -1.0f;
@@ -2645,8 +2834,15 @@ mix_audio(void *state, Uint8 *stream, int len)
 
 		s[i] = mix;
 
-		if (i < ARRAY_COUNT(game->last_audio_mix))
-			game->last_audio_mix[i] = mix;
+		if (i < ARRAY_COUNT(game->last_audio_mix)) {
+			f32 window = 1;
+			if (i < 100)
+				window = (f32)i / 100.0f;
+			else if (i > (length - 100))
+				window = (f32)(length - i) / 100.0f;
+
+			game->last_audio_mix[i] = mix * window * window;
+		}
 	}
 
 	game->played_audio_sample_count += length;
@@ -2780,6 +2976,31 @@ read_entire_file(const char* filename, size_t *size_out)
     return result;
 }
 
+static u32
+load_track(struct game_state *game, const char *filename)
+{
+	size_t track_data_size;
+	u8 *data = read_entire_file(filename, &track_data_size);
+	u8 *p = data;
+	u32 track_event_count = (u32)(track_data_size / 7);
+	u32 track_index = game->track_count++;
+	struct track *track = game->tracks + track_index;
+	track->event_count = track_event_count;
+	track->events = malloc(sizeof(struct track_event) * track_event_count);
+	for (u32 i = 0; i < track_event_count; ++i) {
+		struct track_event e;
+		memcpy(&e.t, p, 4);
+		p += 4;
+		e.a = *(p++);
+		e.b = *(p++);
+		e.c = *(p++);
+		track->events[i] = e;
+	}
+	free(data);
+
+	return track_index;
+}
+
 int
 main()
 {
@@ -2823,13 +3044,15 @@ main()
 	/* game->level_end_t = -5; */
 	goto_level(global_game, 0);
 
+	load_track(global_game, "track.imm");
+
 	ZERO_STRUCT(input);
 
 	SDL_AudioSpec fmt = { 0 };
 	fmt.freq = AUDIO_FREQ;
 	fmt.format = AUDIO_F32;
 	fmt.channels = 1;
-	fmt.samples = 1024;
+	fmt.samples = AUDIO_SAMPLE_COUNT;
 	fmt.callback = mix_audio;
 	fmt.userdata = global_game;
 
@@ -2841,23 +3064,6 @@ main()
 	audio = 1;
 
 	SDL_PauseAudio(0);
-
-	size_t track_data_size;
-	u8 *data = read_entire_file("track.imm", &track_data_size);
-	u8 *p = data;
-	/* FILE *f = fmemopen(data, track_data_size, "rb"); */
-	u32 track_event_count = (u32)(track_data_size / 7);
-	global_game->track_event_count = track_event_count;
-	global_game->track_events = malloc(sizeof(struct track_event) * track_event_count);
-	for (u32 i = 0; i < track_event_count; ++i) {
-		struct track_event e;
-		memcpy(&e.t, p, 4);
-		p += 4;
-		e.a = *(p++);
-		e.b = *(p++);
-		e.c = *(p++);
-		global_game->track_events[i] = e;
-	}
 
 #if defined(__EMSCRIPTEN__)
 	emscripten_set_main_loop(update_and_render, 0, 1);
