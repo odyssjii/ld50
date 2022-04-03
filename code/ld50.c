@@ -338,7 +338,8 @@ struct sound {
 	b8 disposed: 1;
 	b8 fadeout: 1;
 	b8 echo: 1;
-	u16 pad: 11;
+	b8 once: 1;
+	u16 pad: 10;
 	u16 tag;
 	f32 play_begin;
 	f32 fadeout_begin;
@@ -441,15 +442,6 @@ struct game_state {
 	u32 time_speed_up;
 	b16 skip_to_begin;
 	b16 skip_to_end;
-
-	struct waveform sine_waves[MAX_ENTITY_COUNT * MAX_ENTITY_PART_COUNT];
-	u32 sine_wave_count;
-
-	struct waveform saw_waves[MAX_ENTITY_COUNT * MAX_ENTITY_PART_COUNT];
-	u32 saw_wave_count;
-
-	struct waveform noise_waves[MAX_ENTITY_COUNT * MAX_ENTITY_PART_COUNT];
-	u32 noise_wave_count;
 
 	struct sound sounds[MAX_SOUND_COUNT];
 	u32 sound_count;
@@ -1210,11 +1202,11 @@ init_player(struct entity *entity, u16 leg_count)
 		l1->dmg = PARTICLE_BULLET;
 	}
 
-	struct entity_part *l2 = push_entity_part(entity, 20, 20, 9, 0);
-	l2->internal_collisions = true;
-	l2->stiffness = 2;
-	l2->mass = 1;
-	l2->dmg = PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE;
+	/* struct entity_part *l2 = push_entity_part(entity, 20, 20, 9, 0); */
+	/* l2->internal_collisions = true; */
+	/* l2->stiffness = 2; */
+	/* l2->mass = 1; */
+	/* l2->dmg = PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE; */
 
 
 	/* add_squid_leg(entity, 0, 6, leg_count, 20, 25, 0); */
@@ -2402,6 +2394,8 @@ play_track(struct game_state *game, u16 index)
 
 	SDL_LockAudioDevice(1);
 
+	f32 volume = 0.5f;
+
 	struct track_event e = track->events[track->current_event];
 	/* f32 t = game->real_time; */
 	/* f32 next_t = track->last_event_time + (f32)e.t / 1000.0f; */
@@ -2414,14 +2408,13 @@ play_track(struct game_state *game, u16 index)
 	/* u32 next_frame = track->last_event_frame + e.t / 15; */
 	/* if (frame >= next_frame || (next_frame - frame) < 1) { */
 	if (t >= next_frame_t) {
-		game->noise_wave_count = 0;
 		if (e.a < 0x80) {
 			if (track->last_event_status <= 0x8f) {
 				struct sound *s = find_sound_by_tag(game, index, e.a);
 				if (s)
 					s->disposed = true;
 			} else if (track->last_event_status <= 0x9f) {
-				struct sound *s = push_tagged_sound(game, SAW, (u16)(440 * pow(2, ((f64)e.a - 69.0) / 12.0)), e.b / 127.0f, index, e.a);
+				struct sound *s = push_tagged_sound(game, SAW, (u16)(440 * pow(2, ((f64)e.a - 69.0) / 12.0)), e.b / 127.0f * volume, index, e.a);
 				if (s)
 					s->echo = true;
 
@@ -2442,7 +2435,7 @@ play_track(struct game_state *game, u16 index)
 					/* s->fadeout_end = t + 0.01f; */
 
 			} else if (e.a < 0x9f) {
-				struct sound *s = push_tagged_sound(game, SAW, (u16)(440 * pow(2, ((f64)e.b - 69.0) / 12.0)), e.c / 127.0f, index, e.b);
+				struct sound *s = push_tagged_sound(game, SAW, (u16)(440 * pow(2, ((f64)e.b - 69.0) / 12.0)), e.c / 127.0f * volume, index, e.b);
 				if (s)
 					s->echo = true;
 				struct sound *noise = push_sound(game, WHITENOISE, 0, 0.5f);
@@ -2489,118 +2482,50 @@ fft(double complex buf[], double complex tmp[],  int n)
 static void
 update_audio(struct game_state *game)
 {
-	game->noise_wave_count = 0;
-	/* play_track(game, game->tracks); */
-
-	/* game->sine_wave_count = 3; */
-	/* game->sine_waves[0].amp = 1; */
-	/* game->sine_waves[0].freq = 880; */
-
-	/* game->sine_waves[1].amp = 0.7f; */
-	/* game->sine_waves[1].freq = 440; */
-
-	/* game->sine_waves[2].amp = 0.4f; */
-	/* game->sine_waves[2].freq = 50; */
-
-	/* game->sine_wave_count = 1; */
-	/* game->sine_waves->amp = 1; */
-	/* game->sine_waves->freq = 440; */
-
-#if 1
-	if (game->time > game->next_note_t) {
-		game->next_note_t += 4;
-		if (game->note == 40)
-			game->note = 80;
-		else if (game->note == 80)
-			game->note = 60;
-		else
-			game->note = 40;
-	}
 
 	SDL_LockAudioDevice(1);
-	/* game->noise_wave_count = 0; */
-
-	u32 wave_index = 0;
 	if (true) {
 		for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
 			struct entity *entity = game->entities + entity_index;
 			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
 				struct entity_part *part = entity->parts + part_index;
-
-				/* struct waveform *sine = game->sine_waves + wave_index; */
-				/* struct waveform *saw = game->saw_waves + wave_index; */
-
-				/* f32 v = len_v2(part->v); */
-
-				/* f32 sqrt_v = sqrtf(v); */
-
-				/* sine->amp = sqrt_v / 400.0f; */
-				/* if (entity->z < 1) */
-				/* 	sine->amp *= entity->z; */
-
-				/* if (sine->amp > 0.25f) */
-				/* 	sine->amp = 0.25f; */
-				/* sine->freq = (u16)((roundf(v * 10 / part->size)) * (f32)game->note); */
-
-				/* saw->amp = sqrt_v / 400.0f; /\* part->size / 1000.0f; *\/ */
-				/* if (entity->z < 1) */
-				/* 	saw->amp *= entity->z; */
-
-				/* if (saw->amp > 0.25f) */
-				/* 	saw->amp = 0.25f; */
-
-				/* saw->freq = (u16)((roundf(v * 100 / part->mass)) * 4 * (f32)game->note); /\* (u16)(roundf(len_v2(part->v)) * 40); *\/ */
-
-				if (part->audio_gen > 0 && game->noise_wave_count < ARRAY_COUNT(game->noise_waves)) {
-					struct waveform *noise = game->noise_waves + (game->noise_wave_count++);
-					noise->amp = part->audio_gen * entity->z;
+				if (part->audio_gen > 0) {
+					f32 amp = part->audio_gen * entity->z;
 					if (entity->z < 1)
-						noise->amp *= entity->z;
+						amp *= entity->z;
 
-					if (noise->amp > 0.5f)
-						noise->amp = 0.5f;
+					if (amp > 0.5f)
+						amp = 0.5f;
 
-					part->audio_gen = 0;
+					struct sound *s = push_sound(game, WHITENOISE, 0, amp);
+					if (s)
+						s->once = true;
 				}
-
-
-				/* ++wave_index; */
 			}
 		}
 	}
 	for (u32 particle_index = 0; particle_index < game->particle_count; ++particle_index) {
 		struct particle *particle = game->particles + particle_index;
 		struct entity_part *part = &particle->part;
-		if (false) {
-			if (part->audio_gen > 0 && game->noise_wave_count < ARRAY_COUNT(game->noise_waves)) {
-				struct waveform *noise = game->noise_waves + (game->noise_wave_count++);
-				if (noise->amp > 0.5f)
-					noise->amp = 0.5f;
-				part->audio_gen = 0;
-			}
-		} else if (particle->type == PARTICLE_EXPLOSION) {
+		if (particle->type == PARTICLE_EXPLOSION) {
 			f32 ttl = particle->expiration_t - game->time;
-			if (ttl > 0 && game->sine_wave_count < ARRAY_COUNT(game->sine_waves)) {
-				struct waveform *sine = game->sine_waves + (wave_index++);
-				sine->freq = 60 + (u16)(30 * fmodf(ttl, 1));
-				sine->amp = ttl * ttl / 2;
-			}
-			/* if (ttl > 0 && game->sine_wave_count < ARRAY_COUNT(game->sine_waves)) { */
-			/* 	struct waveform *sine = game->sine_waves + (wave_index++); */
-			/* 	sine->freq = 1000 + (u16)(1000 * fmodf(ttl, 1)); */
-			/* 	sine->amp = ttl * ttl * ttl * ttl; */
-			/* } */
-			if (ttl > 0 && game->noise_wave_count < ARRAY_COUNT(game->noise_waves)) {
-				struct waveform *noise = game->noise_waves + (game->noise_wave_count++);
-				noise->amp = fmodf(ttl, 1) / 2; /* 0.5f * ttl; */
-				part->audio_gen = 0;
+			if (ttl > 0) {
+				struct sound *s = push_sound(game, SINE, 70 + (u16)(30 * fmodf(ttl, 1)), ttl * ttl / 2);
+				if (s)
+					s->once = true;
+
+				s = push_sound(game, SAW, 80 + (u16)(30 * fmodf(ttl, 1)), ttl * ttl / 2);
+				if (s)
+					s->once = true;
+
+				s = push_sound(game, WHITENOISE, 0, fmodf(ttl, 1) / 2);
+				if (s)
+					s->once = true;
 			}
 		}
 	}
-	game->sine_wave_count = wave_index;
-	/* game->saw_wave_count = wave_index; */
+
 	SDL_UnlockAudioDevice(1);
-#endif
 
 	if (false) {
 		static const s32 mix_length = ARRAY_COUNT(game->last_audio_mix);
@@ -3032,7 +2957,7 @@ render_game(struct game_state *game,
 						f32 ttl = entity->expiration_t - game->time;
 						f32 z = ttl * 10;
 						f32 power = make_lightning_to_point(game, renderer, p1->p, p2->p, z, t, r);
-						entity->parts->audio_gen = power; /* * 0.12f; */
+						entity->parts->audio_gen = power * 0.12f; /* * 0.12f; */
 					}
 				}
 			}
@@ -3152,7 +3077,7 @@ mix_audio(void *state, Uint8 *stream, int len)
 	u32 length = (u32)(len / 4);
 	f32 *s = (f32 *)(void *)stream;
 
-	play_track(game, 0);
+	/* play_track(game, 0); */
 
 	f32 global_t = (f32)(game->played_audio_sample_count) / AUDIO_FREQ;
 	u32 sound_index;
@@ -3167,19 +3092,20 @@ mix_audio(void *state, Uint8 *stream, int len)
 			struct sound *echo = push_sound(game, sound->type, sound->wave.freq, sound->wave.amp * 0.5f);
 			if (echo) {
 				echo->echo = echo->wave.amp > 0.1f;
-				/* echo->disposed = true; */
 				echo->fadeout = true;
 				echo->fadeout_end = global_t + 0.1f;
-				/* echo->fadeout = true; */
-				/* echo->fadeout_begin = echo->play_begin; */
-				/* echo->fadeout_end = echo->fadeout_begin + 1; */
 			}
 		}
 
-		if (sound->disposed)
+		if (sound->disposed) {
 			game->sounds[sound_index] = game->sounds[--game->sound_count];
-		else
-			++sound_index;
+			continue;
+		}
+
+		if (sound->once)
+			sound->disposed = true;
+
+		++sound_index;
 	}
 
 	for (u32 i = 0; i < length; ++i) {
@@ -3212,38 +3138,6 @@ mix_audio(void *state, Uint8 *stream, int len)
 				f32 fade = (global_t - sound.fadeout_begin) / (sound.fadeout_end - sound.fadeout_begin);
 				w *= fade;
 			}
-
-			mix += w;
-		}
-
-		for (u32 wave_index = 0; wave_index < game->sine_wave_count; ++wave_index) {
-			struct waveform *wave = game->sine_waves + wave_index;
-			f32 w = sinf(2.0f * 3.14f * wave->freq * t) * wave->amp;
-			mix += w;
-		}
-
-		for (u32 wave_index = 0; wave_index < game->saw_wave_count; ++wave_index) {
-			struct waveform *wave = game->saw_waves + wave_index;
-			f32 w = 0;
-			if (!IS_F32_ZERO(wave->amp))
-				w = fmodf(wave->amp * wave->freq * t, wave->amp) - wave->amp / 2;
-
-			/* if (wave->expiration_t > 0) { */
-			/* 	f32 ttl = wave->expiration_t - t; */
-			/* 	if (ttl < 0) */
-			/* 		ttl = 0; */
-			/* 	if (ttl > 1) */
-			/* 		ttl = 1; */
-			/* 	printf("%f\n", ttl); */
-			/* 	w *= ttl * ttl * ttl; */
-			/* } */
-
-			mix += w;
-		}
-
-		for (u32 wave_index = 0; wave_index < game->noise_wave_count; ++wave_index) {
-			struct waveform *wave = game->noise_waves + wave_index;
-			f32 w = wave->amp * (2 * random_f32() - 1);
 
 			mix += w;
 		}
