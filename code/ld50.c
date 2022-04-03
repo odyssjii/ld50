@@ -471,6 +471,8 @@ struct game_state {
 
 	u32 entity_id_seq;
 	u32 score;
+	u32 visible_score;
+	u32 pad_;
 
 	b32 game_over;
 	b32 card_select_mode;
@@ -1114,7 +1116,7 @@ push_entity_part(struct entity *entity, u16 length, u16 size, u16 color, u16 par
 	p->mass = p->width * p->height;
 	p->color = color;
 	p->immune_to_wall = true;
-	p->hp = 5;
+	p->max_hp = p->hp = 5;
 	return p;
 }
 
@@ -1127,7 +1129,7 @@ add_squid_leg(struct entity *entity, u16 parent_index, u16 color, u16 length, u1
 	for (u16 i = 0; i < length; ++i) {
 		p = push_entity_part(entity, spacing, size - i, color, parent_index);
 		p->stiffness = stiffness;
-		p->hp = hp;
+		p->max_hp = p->hp = hp;
 		parent_index = p->index;
 	}
 
@@ -1193,7 +1195,7 @@ push_worm_tail(struct entity *entity)
 	p = push_entity_part(entity, 25, (u16)(40 - entity->part_count), 2, parent_index);
 	p->p = entity->parts[p->index - 1].p;
 	p->immune_to_wall = true;
-	p->hp = 5;
+	p->max_hp = p->hp = 5;
 }
 
 static struct entity *
@@ -1262,7 +1264,7 @@ init_enemy(struct entity *entity, u32 difficulty)
 
 	struct entity_part *head = push_entity_part(entity, 0, head_size, c1, 0);
 	head->mass *= 100;
-	head->hp = hp;
+	head->max_hp = head->hp = hp;
 	head->internal_collisions = true;
 	head->dmg = PARTICLE_BULLET;
 	head->fire_rate = (u8)fire_rate;
@@ -1294,7 +1296,7 @@ init_enemy(struct entity *entity, u32 difficulty)
 				struct entity_part *s = push_entity_part(entity, head_size, secondary_size, c2, head->index);
 				s->internal_collisions = true;
 				s->stiffness = 10;
-				s->hp = (u16)(scale * hp);
+				s->max_hp = s->hp = (u16)(scale * hp);
 				s->dmg = PARTICLE_BULLET;
 				s->fire_rate = (u8)fire_rate;
 			}
@@ -1610,22 +1612,22 @@ complete_card_select_mode(struct game_state *game)
 			u16 max_hp = p->max_hp;
 			u32 next_max = (u32)(max_hp * 1.2f);
 			if (next_max == max_hp)
-				p->max_hp++;
+				p->hp = ++p->max_hp;
 			else if (next_max < 255)
-				p->max_hp = (u16)next_max;
+				p->hp = p->max_hp = (u16)next_max;
 			else
-				p->max_hp = 255;
+				p->hp = p->max_hp = 255;
 		} break;
 
 		case UPGRADE_WEAPON_CARD: {
 			u32 part_index = (u32)(random_int(0, player->part_count));
 			struct entity_part *p = player->parts + part_index;
 
-			u32 next_rate = (u32)(p->fire_rate * 2);
+			u32 next_rate = (u32)(p->fire_rate + 2);
 			if (next_rate <= UINT8_MAX)
-				p->max_hp = (u8)next_rate;
+				p->fire_rate = (u8)next_rate;
 			else
-				p->max_hp = UINT8_MAX;
+				p->fire_rate = UINT8_MAX;
 		} break;
 
 		case LIGHTNING_CARD: {
@@ -1677,9 +1679,10 @@ goto_level(struct game_state *game, u32 level)
 
 	if (!find_entity_by_id(game, game->player_id, &game->player_index)) {
 		game->entity_count = 0;
+		game->score = 0;
 		push_spawn_item(game, ENTITY_PLAYER, 0, 0);
 
-		if (true)
+		if (false)
 			activate_card_select_mode(game);
 	} else {
 		activate_card_select_mode(game);
@@ -2504,8 +2507,13 @@ check_for_collisions_against_entities(struct game_state *game, struct entity_par
 								other_part->hurt = 1;
 								part->disposed = true;
 
+								if (other->id != game->player_id)
+									game->score += part->dmg * 10;
+
 								if (!other_part->disposed)
 									spawn_debris(game, owner, other_part->color, other_part->p, max_u(part->dmg, 10), false);
+								else
+									game->score += other_part->max_hp * 100;
 							}
 
 							if ((game->particles[owner.particle_index].type & PARTICLE_LIGHTNING_GUIDE)) {
@@ -3123,20 +3131,6 @@ render_audio_spectrum(struct game_state *game,
 	SDL_RenderPresent(renderer);
 }
 
-/* static void */
-/* render_game(struct game_state *game, */
-/*             SDL_Renderer *renderer, */
-/*             TTF_Font *font, */
-/* 	    TTF_Font *small_font) */
-/* { */
-/* 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); */
-/* 	SDL_RenderClear(renderer); */
-
-/* 	struct color white = color(0xFF, 0xFF, 0xFF, 0xFF); */
-
-/* 	SDL_RenderPresent(renderer); */
-/* } */
-
 static void
 render_entity_part(struct game_state *game,
 		   SDL_Renderer *renderer,
@@ -3557,6 +3551,7 @@ render_game(struct game_state *game,
 
 			if (game->game_over) {
 				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, c, "GAME OVER", game->current_level + 1);
+				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, c, "PRESS 'SPACE' TO TRY AGAIN");
 			} else {
 				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, c, "LEVEL %u", game->current_level + 1);
 
@@ -3571,6 +3566,26 @@ render_game(struct game_state *game,
 
 	if (game->game_over) {
 		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, white, "GAME OVER", game->current_level + 1);
+		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, white, "PRESS 'SPACE' TO TRY AGAIN");
+	}
+
+	u32 score_delta = 0;
+	if (game->visible_score < game->score)
+		score_delta = (u32)(ceilf((f32)(game->score - game->visible_score) * 0.1f));
+	else if (game->visible_score > game->score)
+		game->visible_score = game->score;
+
+	game->visible_score += score_delta;
+
+	if (score_delta) {
+		f32 z = 1 + (f32)score_delta / 100;
+		if (z > 2)
+			z = 2;
+		SDL_RenderSetScale(renderer, z, z);
+		draw_string_f(renderer, font, (s32)(WINDOW_WIDTH / 2 / z), (s32)((5 + SMALL_FONT_SIZE) / z), TEXT_ALIGN_CENTER, white, "%u", game->visible_score);
+		SDL_RenderSetScale(renderer, 1, 1);
+	} else {
+		draw_string_f(renderer, font, WINDOW_WIDTH / 2, 5 + SMALL_FONT_SIZE, TEXT_ALIGN_CENTER, white, "%u", game->visible_score);
 	}
 
 	if (false) {

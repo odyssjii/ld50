@@ -1,1 +1,1 @@
-emcc -std=c11 -O2 code/ld50.c -s USE_SDL=2 -s USE_SDL_TTF=2 -s ALLOW_MEMORY_GROWTH=1  -o build/ld50.html --embed-file data/novem___.ttf@novem___.ttf --embed-file data/track.imm@track.imm --shell-file code/minimal_shell.html
+emcc -std=c11 -O2 code/ld50.c -s USE_SDL=2 -s USE_SDL_TTF=2 -s ALLOW_MEMORY_GROWTH=1  -o build/ld50.html --embed-file data/novem___.ttf@novem___.ttf --embed-file data/track.imm@track.imm --embed-file data/track-2.imm@track-2.imm --embed-file data/track-3.imm@track-3.imm --embed-file data/track-4.imm@track-4.imm --shell-file code/minimal_shell.html
