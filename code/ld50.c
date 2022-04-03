@@ -2601,8 +2601,11 @@ kill_entity_part_at_bounds(struct entity_part *part)
 	    part->p.x < 0 ||
 	    part->p.x > WINDOW_WIDTH ||
 	    part->p.y < 0 ||
-	    part->p.y > WINDOW_HEIGHT)
+	    part->p.y > WINDOW_HEIGHT) {
 		part->disposed = true;
+		part->p.x = WINDOW_WIDTH * 2;
+		part->p.y = WINDOW_HEIGHT * 2;
+	}
 }
 
 static void
@@ -3899,7 +3902,10 @@ main()
 		-1,
 		SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
-	/* SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN); */
+#if !defined(__EMSCRIPTEN__)
+	if (true)
+		SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
+#endif
 
 	SDL_GetRendererOutputSize(renderer, &renderer_w, &renderer_h);
 
