@@ -517,6 +517,7 @@ struct input_state
 	u8 up;
 	u8 down;
 
+	u8 action;
 	u8 start;
 
 	u8 speed_up;
@@ -527,6 +528,7 @@ struct input_state
 	s8 dup;
 	s8 ddown;
 	s8 dstart;
+	s8 daction;
 
 	s8 dspeed_up;
 	s8 dspeed_down;
@@ -2097,7 +2099,7 @@ apply_user_input(struct game_state *game, const struct input_state *input)
 			if (input->down)
 				root->a.y += 8;
 
-			game->shield_active = input->start;
+			game->shield_active = input->action;
 
 			s32 mouse_x, mouse_y;
 			u32 mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
@@ -3551,7 +3553,7 @@ render_game(struct game_state *game,
 
 			if (game->game_over) {
 				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, c, "GAME OVER", game->current_level + 1);
-				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, c, "PRESS 'SPACE' TO TRY AGAIN");
+				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, c, "PRESS 'ENTER' TO TRY AGAIN");
 			} else {
 				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, c, "LEVEL %u", game->current_level + 1);
 
@@ -3559,14 +3561,14 @@ render_game(struct game_state *game,
 					draw_string_f(renderer, small_font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 -9 + FONT_SIZE, TEXT_ALIGN_CENTER, c, "%s", game->level_instr);
 				}
 
-				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, c, "PRESS 'SPACE' TO SKIP");
+				draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, c, "PRESS 'ENTER' TO SKIP");
 			}
 		}
 	}
 
 	if (game->game_over) {
 		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, white, "GAME OVER", game->current_level + 1);
-		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, white, "PRESS 'SPACE' TO TRY AGAIN");
+		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, white, "PRESS 'ENTER' TO TRY AGAIN");
 	}
 
 	u32 score_delta = 0;
@@ -3756,7 +3758,8 @@ update_and_render()
 		input.right = key_states[SDL_SCANCODE_RIGHT];
 		input.up = key_states[SDL_SCANCODE_UP];
 		input.down = key_states[SDL_SCANCODE_DOWN];
-		input.start = key_states[SDL_SCANCODE_SPACE];
+		input.start = key_states[SDL_SCANCODE_RETURN];
+		input.action = key_states[SDL_SCANCODE_SPACE];
 
 		input.speed_up = key_states[SDL_SCANCODE_PAGEUP];
 		input.speed_down = key_states[SDL_SCANCODE_PAGEDOWN];
@@ -3766,6 +3769,7 @@ update_and_render()
 		input.dup = (s8)(input.up - prev_input.up);
 		input.ddown = (s8)(input.down - prev_input.down);
 		input.dstart = (s8)(input.start - prev_input.start);
+		input.daction = (s8)(input.action - prev_input.action);
 
 		input.dspeed_up = (s8)(input.speed_up - prev_input.speed_up);
 		input.dspeed_down = (s8)(input.speed_down - prev_input.speed_down);
