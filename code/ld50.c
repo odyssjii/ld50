@@ -44,8 +44,8 @@ typedef u32 b32;
 #define FONT_SIZE 24
 #define SMALL_FONT_SIZE 16
 #define MAX_ENTITY_COUNT 512
-#define MAX_ENTITY_PART_COUNT 32
-#define MAX_PARTICLE_COUNT 1024
+#define MAX_ENTITY_PART_COUNT 255
+#define MAX_PARTICLE_COUNT (1 << 15)
 #define MAX_SOUND_COUNT (1 << 15)
 #define AUDIO_SAMPLE_COUNT 1024
 #define TUNNEL_SEGMENT_COUNT 1024
@@ -227,10 +227,11 @@ scale_v2i(struct v2i a, s32 s)
 
 struct entity_part_owner {
 	u32 entity_id;
-	u16 entity_index;
+	u32 entity_index;
 	u16 particle_index;
 	u16 entity_part_index;
 	b16 direct;
+	b16 pad;
 };
 
 struct entity_part {
@@ -242,14 +243,15 @@ struct entity_part {
 	u16 parent_index;
 	u16 depth;
 	b8 disposed;
-	b8 die_at_screen_edge: 4;
-	b8 immune_to_wall: 4;
+	b8 die_at_screen_edge: 2;
+	b8 immune_to_wall: 2;
+	b8 internal_collisions: 2;
+	b8 passthrough: 2;
 	f32 stiffness;
 	f32 mass;
-	u8 max_alpha;
+	u8 fire_rate;
 	b8 suspended_for_frame;
-	b8 internal_collisions;
-	b8 passthrough;
+	u16 max_hp;
 	f32 audio_gen;
 	f32 hurt;
 	u16 hp;
@@ -260,6 +262,7 @@ struct entity_part {
 	struct v2 v;
 	struct v2 a;
 	struct v2 force;
+	const char *name;
 };
 
 enum particle_type {
@@ -268,7 +271,8 @@ enum particle_type {
 	PARTICLE_LIGHTNING_GUIDE = (1 << 1),
 	PARTICLE_EXPLOSION = (1 << 2),
 	PARTICLE_DEBRIS = (1 << 3),
-	PARTICLE_FAT_BULLET = (1 << 4)
+	PARTICLE_FAT_BULLET = (1 << 4),
+	PARTICLE_FIREBALL = (1 << 5)
 };
 
 struct particle {
@@ -278,13 +282,15 @@ struct particle {
 	u32 owner_id;
 	u16 owner_part_index;
 	u16 pad_;
+	f32 spawn_t;
 	f32 expiration_t;
+	u32 pad2_;
 };
 
 enum entity_type {
-	ENTITY_NONE,
-	ENTITY_PLAYER      = 0x001,
-	ENTITY_SIMPLE      = (1 << 1),
+	ENTITY_NONE        = 0,
+	ENTITY_PLAYER      = 1,
+	ENTITY_ENEMY       = (1 << 1),
 	ENTITY_LIGHTNING   = (1 << 2)
 };
 
@@ -294,9 +300,12 @@ struct entity {
 	u32 seed;
 	u32 type;
 	u8 part_count;
-	b8 internal_collisions;
-	b8 disposed;
-	b8 suspended_for_frame;
+	b8 internal_collisions: 1;
+	b8 disposed: 1;
+	b8 suspended_for_frame: 1;
+	b8 expire: 1;
+	u32 pad: 20;
+	u32 pad_;
 	struct entity_part parts[MAX_ENTITY_PART_COUNT];
 
 	struct v2 target;
@@ -309,10 +318,7 @@ struct entity {
 	f32 expiration_t;
 	f32 next_bullet_t;
 
-	f32 fire_interval;
-
 	f32 z;
-	f32 accum_z;
 
 	u32 from_id;
 	u32 to_id;
@@ -374,7 +380,7 @@ struct game_event {
 struct spawn_item {
 	enum entity_type type;
 	u32 param;
-	f32 time;
+	u32 group;
 };
 
 struct track_event {
@@ -390,14 +396,28 @@ struct track {
 	u32 event_count;
 	u32 current_event;
 	f32 last_event_time;
-	u32 last_event_frame;
 	u8 last_event_status;
-	u8 pad[3];
+	u32 tempo_inverse_scale: 24;
 };
 
 struct tunnel_segment {
 	u16 left;
 	u16 right;
+};
+
+enum card_type {
+	REPAIR_CARD,
+	UPGRADE_HP_CARD,
+	UPGRADE_WEAPON_CARD,
+	LIGHTNING_CARD,
+	FIREBALL_CARD,
+	TURRET_CARD
+};
+
+struct card {
+	enum card_type type;
+	u32 param;
+	const char *name;
 };
 
 struct game_state {
@@ -406,6 +426,7 @@ struct game_state {
 
 	u32 entity_index_by_z[MAX_ENTITY_COUNT];
 
+	u32 last_played_track;
 	struct particle particles[MAX_PARTICLE_COUNT];
 	u32 particle_count;
 
@@ -426,9 +447,6 @@ struct game_state {
 	f32 tunnel_begin_t;
 
 	f32 level_begin_t;
-	f32 level_end_t;
-
-	f32 tunnel_size;
 
 	u32 current_level;
 
@@ -439,6 +457,8 @@ struct game_state {
 
 	f32 next_spawn_t;
 
+	u32 spawn_group;
+
 	u32 time_speed_up;
 	b16 skip_to_begin;
 	b16 skip_to_end;
@@ -446,25 +466,33 @@ struct game_state {
 	struct sound sounds[MAX_SOUND_COUNT];
 	u32 sound_count;
 
-	u64 played_audio_sample_count;
-
 	struct game_event events[64];
 	u32 event_count;
 
 	u32 entity_id_seq;
-	u32 sound_id_seq;
-
 	u32 score;
 
 	b32 game_over;
+	b32 card_select_mode;
+	b32 did_select_card;
+	f32 card_select_t;
+	f32 card_select_start_t;
 
-	const char *level_instr;
+	u32 selected_card;
+	u32 card_count;
+	f32 tunnel_difficulty;
+	struct card cards[3];
 
 	f32 last_audio_mix[AUDIO_SAMPLE_COUNT];
 	f32 audio_mix_sample[AUDIO_SAMPLE_COUNT];
 	f32 audio_mix_power;
 
-	struct track tracks[2];
+	b32 waiting_for_spawn;
+
+	b32 shield_active;
+	f32 shield_energy;
+
+	struct track tracks[8];
 	u32 track_count;
 
 	u32 current_tunnel_segment;
@@ -473,6 +501,8 @@ struct game_state {
 	f32 current_tunnel_depth;
 	f32 next_tunnel_depth;
 
+	u64 played_audio_sample_count;
+	const char *level_instr;
 
 	SDL_Texture *temp_texture;
 	/* u32 note_wave_number[128]; */
@@ -534,6 +564,20 @@ max(s32 x, s32 y)
 {
 	return x > y ? x : y;
 }
+
+static u32
+min_u(u32 x, u32 y)
+{
+	return x < y ? x : y;
+}
+
+static u32
+max_u(u32 x, u32 y)
+{
+	return x > y ? x : y;
+}
+
+
 
 static const struct v2 screen_center = { .x = WINDOW_WIDTH / 2, .y = WINDOW_HEIGHT / 2 };
 static struct game_state *global_game;
@@ -725,6 +769,7 @@ fill_rotated_rect(struct game_state *game, SDL_Renderer *renderer, s32 x, s32 y,
 	SDL_Point center = { .x = source.w / 2, .y = source.h / 2 };
 	SDL_SetTextureColorMod(game->temp_texture, color.r, color.g, color.b);
 	SDL_SetTextureAlphaMod(game->temp_texture, color.a);
+	SDL_SetTextureBlendMode(game->temp_texture, SDL_BLENDMODE_BLEND);
 	SDL_RenderCopyEx(renderer, game->temp_texture, &source, &dest, angle * 180 / 3.14, &center, SDL_FLIP_NONE);
 }
 
@@ -789,6 +834,16 @@ draw_string_f(SDL_Renderer *renderer, TTF_Font *font, s32 x, s32 y, enum text_al
 
 	va_end(args);
 }
+
+static void
+fill_cell_c(SDL_Renderer *renderer, s32 offset_x, s32 offset_y, s32 w, s32 h, struct color c)
+{
+	s32 x = (s32)(round(offset_x - (w / 2.0)));
+	s32 y = (s32)(round(offset_y - (h / 2.0)));
+
+	fill_rect(renderer, x, y, w, h, c);
+}
+
 
 
 static void
@@ -907,25 +962,52 @@ special_fill_cell_(SDL_Renderer *renderer,
 }
 
 
-
-
-
-
-
-
-static void
-end_level(struct game_state *game)
+static struct sound *
+push_sound(struct game_state *game, enum waveform_type type, u16 freq, f32 amp)
 {
-	game->level_end_t = game->time;
+	if (game->sound_count >= MAX_SOUND_COUNT)
+		return 0;
 
-	for (u32 i = 0; i < game->entity_count; ++i) {
-		struct entity *entity = game->entities + i;
-		if (entity->expiration_t > 0)
-			entity->expiration_t = game->level_end_t;
-	}
+	struct sound *s = game->sounds + (game->sound_count++);
+	ZERO_STRUCT(*s);
 
+	s->type = type;
+	s->wave.freq = freq;
+	s->wave.amp = amp;
 
+	return s;
 }
+
+static struct sound *
+push_tagged_sound(struct game_state *game, enum waveform_type type, u16 freq, f32 amp, u16 top_tag, u16 child_tag)
+{
+	if (game->sound_count >= MAX_SOUND_COUNT)
+		return 0;
+
+	struct sound *s = game->sounds + (game->sound_count++);
+	ZERO_STRUCT(*s);
+
+	s->type = type;
+	s->tag = top_tag;
+	s->wave.freq = freq;
+	s->wave.amp = amp;
+	s->wave.tag = child_tag;
+
+	return s;
+}
+
+
+static struct sound *
+find_sound_by_tag(struct game_state *game, u16 top_tag, u16 child_tag)
+{
+	for (u32 i = 0; i < game->sound_count; ++i) {
+		struct sound *s = game->sounds + i;
+		if (s->tag == top_tag && s->wave.tag == child_tag)
+			return s;
+	}
+	return 0;
+}
+
 
 static struct game_event *
 push_game_event(struct game_state *game)
@@ -976,6 +1058,20 @@ try_worm_eat_food(struct game_state *game, struct entity *e1, struct entity_part
 #endif
 
 
+static struct particle *
+push_particle(struct game_state *game, enum particle_type type)
+{
+	if (game->particle_count >= MAX_PARTICLE_COUNT)
+		return 0;
+
+	struct particle *p = game->particles + (game->particle_count++);
+	ZERO_STRUCT(*p);
+	p->type = type;
+	p->spawn_t = game->time;
+	p->expiration_t = p->spawn_t + 5;
+	return p;
+}
+
 static struct entity *
 push_entity(struct game_state *game)
 {
@@ -1024,13 +1120,14 @@ push_entity_part(struct entity *entity, u16 length, u16 size, u16 color, u16 par
 
 
 static void
-add_squid_leg(struct entity *entity, u16 parent_index, u16 color, u16 length, u16 spacing, u16 size, f32 stiffness)
+add_squid_leg(struct entity *entity, u16 parent_index, u16 color, u16 length, u16 spacing, u16 size, f32 stiffness, u16 hp)
 {
 	struct entity_part *p;
 
 	for (u16 i = 0; i < length; ++i) {
 		p = push_entity_part(entity, spacing, size - i, color, parent_index);
 		p->stiffness = stiffness;
+		p->hp = hp;
 		parent_index = p->index;
 	}
 
@@ -1076,6 +1173,7 @@ init_lightning(struct entity *entity, u32 from_id, u16 from_part_index, u32 to_i
 	entity->from_part_index = from_part_index;
 	entity->to_part_index = to_part_index;
 	entity->z = 1;
+	entity->expire = true;
 
 	struct entity_part *p;
 	p = push_entity_part(entity, 0, 0, UINT8_MAX, 0);
@@ -1113,59 +1211,117 @@ init_worm(struct entity *entity)
 	return entity;
 }
 
+
 static struct entity *
-init_water_eater(struct entity *entity)
+init_enemy(struct entity *entity, u32 difficulty)
 {
-	entity->type = 0;
+	entity->type = ENTITY_ENEMY;
 	entity->part_count = 0;
-	entity->internal_collisions = true;
 
-	struct entity_part *p;
-	p = push_entity_part(entity, 0, 25, 5, 0);
-	p->mass = 50 * 50;
+	u8 c1, c2, c3;
+	c1 = 0; c2 = 0; c3 = 0;
+	u16 color_type = (u16)random_int(0, 4);
+	switch (color_type) {
+	case 0:
+		c1 = 7;
+		c2 = 2;
+		c3 = 5;
+		break;
+	case 1:
+		c1 = 1;
+		c2 = 4;
+		c3 = 6;
+		break;
+	case 2:
+		c1 = 3;
+		c2 = 8;
+		c3 = 5;
+		break;
+	case 3:
+		c1 = 6;
+		c2 = 9;
+		c3 = 1;
+		break;
+	}
 
-	struct entity_part *l1;
-	struct entity_part *l2;
-	l1 = push_entity_part(entity, 25, 20, 2, 0);
-	l2 = push_entity_part(entity, 25, 20, 2, 0);
-	l1->internal_collisions = l2->internal_collisions = true;
-	l1->stiffness = 2;
-	l2->stiffness = 2;
+	u16 head_size = (u16)(random_int(30, 100));
+	u16 secondary_max_size = head_size / 2;
+	u16 secondary_count = (u16)random_int(0, 8);
+	if (secondary_max_size < 20)
+		secondary_count = 0;
 
-	add_squid_leg(entity, l1->index, 7, 4, 30, 20, 2);
-	add_squid_leg(entity, l2->index, 7, 4, 30, 20, 2);
+	u16 max_hp = difficulty > UINT16_MAX ? UINT16_MAX : (u16)difficulty;
+	u16 hp = (u16)(min_u(head_size, max_hp));
+	u32 fire_rate = difficulty / 10;
+	if (secondary_count)
+		fire_rate /= secondary_count;
+	if (fire_rate < 1)
+		fire_rate = 1;
+	if (fire_rate > UINT8_MAX)
+		fire_rate = UINT8_MAX;
+
+	struct entity_part *head = push_entity_part(entity, 0, head_size, c1, 0);
+	head->mass *= 100;
+	head->hp = hp;
+	head->internal_collisions = true;
+	head->dmg = PARTICLE_BULLET;
+	head->fire_rate = (u8)fire_rate;
+	/* head->dmg = PARTICLE_FIREBALL; */
+
+	/* u16 secondary_count = (u16)random_int(0, 8); */
+
+	/* secondary_count = 0; */
+
+	if (secondary_count) {
+		if (random_f32() > 0.8f) {
+			/* NOTE(omid): Snake. */
+			u16 secondary_size = (u16)(random_int(19, secondary_max_size));
+
+			f32 scale = (f32)secondary_size / (f32)head_size;
+			add_squid_leg(entity, head->index, c2, secondary_count, 30, secondary_size, 2, (u16)(scale * hp));
+			if (random_f32() > 0.5f) {
+				head->dmg |= PARTICLE_FIREBALL;
+				head->fire_rate = 3;
+			} else {
+				head->dmg |= PARTICLE_LIGHTNING_GUIDE;
+				head->fire_rate = 50;
+			}
+		} else {
+			for (u16 i = 0; i < secondary_count; ++i) {
+				u16 secondary_size = (u16)(random_int(19, secondary_max_size));
+				f32 scale = (f32)secondary_size / (f32)head_size;
+
+				struct entity_part *s = push_entity_part(entity, head_size, secondary_size, c2, head->index);
+				s->internal_collisions = true;
+				s->stiffness = 10;
+				s->hp = (u16)(scale * hp);
+				s->dmg = PARTICLE_BULLET;
+				s->fire_rate = (u8)fire_rate;
+			}
+		}
+	}
+
+	/* struct entity_part *p; */
+	/* p = push_entity_part(entity, 0, 25 + param, c1, 0); */
+	/* p->mass = 50 * 50; */
+	/* p->hp = 10; */
+
+	/* struct entity_part *l1; */
+	/* struct entity_part *l2; */
+	/* l1 = push_entity_part(entity, 25, 20 + param, c2, 0); */
+	/* l2 = push_entity_part(entity, 25, 20 + param, c2, 0); */
+	/* l1->internal_collisions = l2->internal_collisions = true; */
+	/* l1->stiffness = 2; */
+	/* l2->stiffness = 2; */
+
+	/* add_squid_leg(entity, l1->index, c2, 4, 30, 20, 2); */
+	/* add_squid_leg(entity, l2->index, c2, 4, 30, 20, 2); */
 
 	return entity;
 }
 
 static struct entity *
-init_simple(struct entity *entity, u16 param)
-{
-	entity->type = ENTITY_SIMPLE;
-	entity->part_count = 0;
-	entity->fire_interval = 1.0f;
-
-	struct entity_part *p;
-	p = push_entity_part(entity, 0, 25 + param, 5, 0);
-	p->mass = 50 * 50;
-	p->hp = 10;
-
-	struct entity_part *l1;
-	struct entity_part *l2;
-	l1 = push_entity_part(entity, 25, 20 + param, 2, 0);
-	l2 = push_entity_part(entity, 25, 20 + param, 2, 0);
-	l1->internal_collisions = l2->internal_collisions = true;
-	l1->stiffness = 2;
-	l2->stiffness = 2;
-
-	add_squid_leg(entity, l1->index, param % ARRAY_COUNT(BASE_COLORS), 4, 30, 20, 2);
-	add_squid_leg(entity, l2->index, param % ARRAY_COUNT(BASE_COLORS), 4, 30, 20, 2);
-
-	return entity;
-}
-
-static struct entity *
-init_player(struct entity *entity, u16 leg_count)
+init_player(struct entity *entity)
 {
 	struct entity_part *p;
 
@@ -1176,38 +1332,72 @@ init_player(struct entity *entity, u16 leg_count)
 	p->mass = 100000;
 	p->immune_to_wall = false;
 	p->hp = 20;
+	p->max_hp = 20;
+	p->dmg = PARTICLE_BULLET;
+	p->fire_rate = 100;
+	p->name = "HULL";
 
 	if (true) {
-		struct entity_part *l1 = push_entity_part(entity, 20, 20, 0, 0);
+		struct entity_part *l1 = push_entity_part(entity, 40, 20, 0, 0);
 		l1->internal_collisions = true;
 		l1->stiffness = 2;
-		l1->mass = 1;
-		l1->dmg = PARTICLE_BULLET;
+		/* l1->mass = 10; */
+		l1->dmg = PARTICLE_FAT_BULLET;
+		l1->fire_rate = 100;
+		l1->name = "TURRET";
+		l1->max_hp = l1->hp = 4;
 	}
 
-	if (true) {
-		struct entity_part *l1 = push_entity_part(entity, 20, 20, 0, 0);
-		l1->internal_collisions = true;
-		l1->stiffness = 2;
-		l1->mass = 1;
-		l1->dmg = PARTICLE_BULLET | PARTICLE_FAT_BULLET;
-	}
+	/* if (true) { */
+	/* 	struct entity_part *l1 = push_entity_part(entity, 40, 20, 0, 0); */
+	/* 	l1->internal_collisions = true; */
+	/* 	l1->stiffness = 2; */
+	/* 	l1->mass = 1; */
+	/* 	l1->dmg = PARTICLE_FAT_BULLET; */
+	/* 	l1->fire_rate = 255; */
+	/* 	l1->name = "TURRET"; */
+	/* } */
 
 
-	if (true) {
-		struct entity_part *l1 = push_entity_part(entity, 20, 20, 0, 0);
-		l1->internal_collisions = true;
-		l1->stiffness = 2;
-		l1->mass = 1;
-		l1->dmg = PARTICLE_BULLET;
-	}
+	/* if (true) { */
+	/* 	struct entity_part *l1 = push_entity_part(entity, 20, 20, 0, 0); */
+	/* 	l1->internal_collisions = true; */
+	/* 	l1->stiffness = 2; */
+	/* 	l1->mass = 1; */
+	/* 	l1->dmg = PARTICLE_BULLET; */
+	/* } */
 
-	/* struct entity_part *l2 = push_entity_part(entity, 20, 20, 9, 0); */
-	/* l2->internal_collisions = true; */
-	/* l2->stiffness = 2; */
-	/* l2->mass = 1; */
-	/* l2->dmg = PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE; */
+	/* if (true) { */
+	/* 	struct entity_part *l1 = push_entity_part(entity, 50, 20, 5, 0); */
+	/* 	l1->internal_collisions = true; */
+	/* 	l1->stiffness = 2; */
+	/* 	l1->mass = 1; */
+	/* 	l1->dmg = PARTICLE_BULLET | PARTICLE_FIREBALL; */
+	/* } */
 
+	/* { */
+	/* 	struct entity_part *l2 = push_entity_part(entity, 40, 20, 9, 0); */
+	/* 	l2->internal_collisions = true; */
+	/* 	l2->stiffness = 2; */
+	/* 	l2->mass = 1; */
+	/* 	l2->dmg = PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE; */
+	/* } */
+
+	/* { */
+	/* 	struct entity_part *l2 = push_entity_part(entity, 40, 20, 9, 0); */
+	/* 	l2->internal_collisions = true; */
+	/* 	l2->stiffness = 2; */
+	/* 	l2->mass = 1; */
+	/* 	l2->dmg = PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE; */
+	/* } */
+
+	/* { */
+	/* 	struct entity_part *l2 = push_entity_part(entity, 40, 20, 9, 0); */
+	/* 	l2->internal_collisions = true; */
+	/* 	l2->stiffness = 2; */
+	/* 	l2->mass = 1; */
+	/* 	l2->dmg = PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE; */
+	/* } */
 
 	/* add_squid_leg(entity, 0, 6, leg_count, 20, 25, 0); */
 
@@ -1272,12 +1462,210 @@ compute_relative_mass_of_entity_head(const struct entity *entity)
 }
 
 static void
-push_spawn_item(struct game_state *game, enum entity_type type, u32 param, f32 t)
+push_spawn_item(struct game_state *game, enum entity_type type, u32 param, u32 group)
 {
 	struct spawn_item *item = game->spawn_bag + (game->spawn_bag_count++);
 	item->type = type;
 	item->param = param;
-	item->time = game->spawn_bag_count == 1 ? t : (game->spawn_bag[game->spawn_bag_count - 2].time + t);
+	item->group = group;
+}
+
+static void
+spawn_explosion(struct game_state *game, struct entity_part_owner owner, u8 color, struct v2 location, u32 size)
+{
+	u32 more_p = size;
+	while ((more_p--)) {
+		struct particle *particle = push_particle(game, PARTICLE_DEBRIS);
+		if (!particle)
+			break;
+
+		particle->expiration_t = game->time + 1;
+		struct entity_part *p = &particle->part;
+		particle->type = more_p == (size - 1) ? PARTICLE_EXPLOSION : PARTICLE_BULLET;
+		particle->owner_id = owner.entity_id;
+		particle->owner_index = (u16)owner.entity_index;
+		particle->owner_part_index = owner.entity_part_index;
+		p->dmg = 1;
+		p->length = 1;
+		p->width = (u16)random_int(4, 8);
+		p->height = p->width;
+		p->mass = p->width * p->height;
+		p->color = color;
+		p->p = location;
+		p->a = v2((random_f32() - 0.5f) * 100 / p->width, (random_f32() - 0.5f) * 100 / p->height);
+		p->passthrough = true;
+		p->die_at_screen_edge = particle->type == PARTICLE_BULLET;
+		p->immune_to_wall = particle->type == PARTICLE_EXPLOSION;
+	}
+}
+
+static void
+spawn_debris(struct game_state *game, struct entity_part_owner owner, u16 color, struct v2 location, u32 count, bool bang)
+{
+	u32 more_p = count;
+	while ((more_p--)) {
+		struct particle *particle = push_particle(game, PARTICLE_DEBRIS);
+		if (!particle)
+			break;
+
+		particle->expiration_t = game->time + 1;
+		struct entity_part *p = &particle->part;
+		particle->type = bang && more_p == (count - 1) ? PARTICLE_EXPLOSION : PARTICLE_DEBRIS;
+		particle->owner_id = owner.entity_id;
+		particle->owner_index = (u16)owner.entity_index;
+		particle->owner_part_index = owner.entity_part_index;
+		p->length = 1;
+		p->width = (u16)random_int(4, 8);
+		p->height = p->width;
+		p->mass = p->width * p->height;
+		p->color = color;
+		p->p = location;
+		p->a = v2((random_f32() - 0.5f) * 100 / p->width, (random_f32() - 0.5f) * 100 / p->height);
+		p->passthrough = true;
+		p->die_at_screen_edge = particle->type == PARTICLE_DEBRIS;
+		p->immune_to_wall = particle->type == PARTICLE_EXPLOSION;
+	}
+}
+
+static void
+populate_cards(struct game_state *game)
+{
+	game->card_count = 3;
+
+	/* /\* NOTE(omid): Always add repair card. *\/ */
+	/* game->cards[0].name = "REPAIR"; */
+	/* game->cards[0].type = REPAIR_CARD; */
+
+	for (u32 i = 0; i < game->card_count; ++i) {
+		enum card_type card_type;
+		for (;;) {
+			card_type = (enum card_type)(random_int(0, 6));
+			bool duplicate = false;
+			for (u32 j = 0; j < i; ++j)
+				if (game->cards[j].type == card_type)
+					duplicate = true;
+
+			if (!duplicate)
+				break;
+		}
+
+		game->cards[i].type = card_type;
+
+		const char *name = 0;
+		switch (card_type) {
+		case REPAIR_CARD:
+			name = "REPAIR";
+			break;
+		case UPGRADE_HP_CARD:
+			name = "UPGRADE HP";
+			break;
+		case UPGRADE_WEAPON_CARD:
+			name = "UPGRADE WEAPON";
+			break;
+		case LIGHTNING_CARD:
+			name = "LIGHTNING";
+			break;
+		case FIREBALL_CARD:
+			name = "FIREBALL";
+			break;
+		case TURRET_CARD:
+			name = "TURRET";
+			break;
+		}
+
+		game->cards[i].name = name;
+	}
+
+}
+
+static void
+activate_card_select_mode(struct game_state *game)
+{
+	game->card_select_mode = true;
+	game->did_select_card = false;
+	populate_cards(game);
+	game->selected_card = 0;
+	game->card_select_start_t = game->time;
+}
+
+static void
+complete_card_select_mode(struct game_state *game)
+{
+	struct card card = game->cards[game->selected_card];
+
+	if (find_entity_by_id(game, game->player_id, &game->player_index) &&
+	    game->entities[game->player_index].part_count &&
+	    game->entities[game->player_index].part_count < MAX_ENTITY_PART_COUNT) {
+		struct entity *player = game->entities + game->player_index;
+		switch (card.type) {
+		case REPAIR_CARD:
+			for (u32 i = 0; i < player->part_count; ++i)
+				player->parts[i].hp = player->parts[i].max_hp;
+			break;
+
+		case UPGRADE_HP_CARD: {
+			u32 part_index = (u32)(random_int(0, player->part_count));
+			struct entity_part *p = player->parts + part_index;
+
+			u16 max_hp = p->max_hp;
+			u32 next_max = (u32)(max_hp * 1.2f);
+			if (next_max == max_hp)
+				p->max_hp++;
+			else if (next_max < 255)
+				p->max_hp = (u16)next_max;
+			else
+				p->max_hp = 255;
+		} break;
+
+		case UPGRADE_WEAPON_CARD: {
+			u32 part_index = (u32)(random_int(0, player->part_count));
+			struct entity_part *p = player->parts + part_index;
+
+			u32 next_rate = (u32)(p->fire_rate * 2);
+			if (next_rate <= UINT8_MAX)
+				p->max_hp = (u8)next_rate;
+			else
+				p->max_hp = UINT8_MAX;
+		} break;
+
+		case LIGHTNING_CARD: {
+			struct entity_part *p = push_entity_part(player, 40, 20, 9, 0);
+			p->internal_collisions = true;
+			p->stiffness = 2;
+			/* p->mass = 1; */
+			p->dmg = PARTICLE_LIGHTNING_GUIDE;
+			p->fire_rate = 50;
+			p->hp = p->max_hp = 2;
+			p->name = "LIGHTNING";
+		} break;
+
+		case FIREBALL_CARD: {
+			struct entity_part *p = push_entity_part(player, 50, 20, 5, 0);
+			p->internal_collisions = true;
+			p->stiffness = 2;
+			/* p->mass = 1; */
+			p->dmg = PARTICLE_FIREBALL;
+			p->fire_rate = 5;
+			p->hp = p->max_hp = 2;
+			p->name = "FIREBALL";
+		} break;
+
+		case TURRET_CARD: {
+			struct entity_part *p = push_entity_part(player, 40, 20, 0, 0);
+			p->internal_collisions = true;
+			p->stiffness = 2;
+			/* p->mass = 1; */
+			p->dmg = PARTICLE_FAT_BULLET;
+			p->fire_rate = 100;
+			p->hp = p->max_hp = 2;
+			p->name = "TURRET";
+		} break;
+		}
+	}
+	game->card_select_mode = false;
+	game->tunnel_begin_t = game->time + 2.2f;
+	game->level_begin_t = game->tunnel_begin_t;
+	game->next_spawn_t = game->tunnel_begin_t;
 }
 
 static void
@@ -1285,14 +1673,34 @@ goto_level(struct game_state *game, u32 level)
 {
 	game->spawn_bag_count = 0;
 	game->spawn_bag_offset = 0;
+	game->spawn_group = 0;
 
-	push_spawn_item(game, ENTITY_PLAYER, 0, 0);
+	if (!find_entity_by_id(game, game->player_id, &game->player_index)) {
+		game->entity_count = 0;
+		push_spawn_item(game, ENTITY_PLAYER, 0, 0);
+
+		if (true)
+			activate_card_select_mode(game);
+	} else {
+		activate_card_select_mode(game);
+	}
 	game->level_instr = "KICK ASS";
-	f32 level_length = 1000;
+
+	u32 difficulty = (level + 1) * 10;
+
+	game->tunnel_difficulty = (f32)difficulty * 2;
+	if (game->tunnel_difficulty > 150)
+		game->tunnel_difficulty = 150;
 
 	/* push_spawn_item(game, ENTITY_SIMPLE, 0, 0); */
-	for (u32 i = 0; i < 20; ++i) {
-		push_spawn_item(game, ENTITY_SIMPLE, 7 + i, 2);
+	for (u32 i = 0; i < 4; ++i) {
+		difficulty += i;
+		u32 enemy_count = (u32)(random_int(1, 5));
+		u32 difficult_per_enemy = (u32)(difficulty / enemy_count);
+		if (difficult_per_enemy < 1)
+			difficult_per_enemy = 1;
+		for (u32 j = 0; j < enemy_count; ++j)
+			push_spawn_item(game, ENTITY_ENEMY, difficult_per_enemy, 1 + i);
 	}
 
 #if 0
@@ -1394,15 +1802,13 @@ goto_level(struct game_state *game, u32 level)
 	}
 #endif
 	game->current_level = level;
-	game->last_level_end_t = game->level_end_t;
+	game->last_level_end_t = game->time;
 
-	game->tunnel_begin_t = game->level_end_t + 2;
-	game->level_begin_t = game->tunnel_begin_t;
-	game->level_end_t = game->level_begin_t + level_length;
-
-	game->next_spawn_t = game->tunnel_begin_t;
-
-	game->tunnel_size = 0;
+	if (!game->card_select_mode) {
+		game->tunnel_begin_t = game->time + 2.2f;
+		game->level_begin_t = game->tunnel_begin_t;
+		game->next_spawn_t = game->tunnel_begin_t;
+	}
 
 	game->counter_1 = 0;
 
@@ -1418,13 +1824,20 @@ begin_game_frame(struct game_state *game)
 	game->event_count = 0;
 
 	/* NOTE(omid): Clean-up dead entities and initialize the live ones. */
+	if (game->game_over) {
+		for (u32 i = 0; i < game->entity_count; ++i) {
+			struct entity *entity = game->entities + i;
+			for (u32 j = 0; j < entity->part_count; ++j)
+				entity->parts[j].disposed = true;
+		}
+	}
 
 	u32 entity_index = 0;
 	while (entity_index < game->entity_count) {
 		struct entity *entity = game->entities + entity_index;
 		entity->suspended_for_frame = false;
 
-		if (entity->expiration_t < game->time)
+		if (entity->expire && entity->expiration_t < game->time)
 			entity->disposed = true;
 
 		if (entity->part_count == 0)
@@ -1487,6 +1900,9 @@ begin_game_frame(struct game_state *game)
 		while (part_index < entity->part_count) {
 			struct entity_part *part = entity->parts + part_index;
 			if (part->disposed) {
+				struct entity_part_owner owner = { .direct = true, .entity_id = entity->id };
+				spawn_debris(game, owner, part->color, part->p, part->width + part->height, true);
+
 				for (u32 i = 0; i < entity->part_count; ++i)
 					if (entity->parts[i].parent_index == (entity->part_count - 1))
 						entity->parts[i].parent_index = part_index;
@@ -1522,70 +1938,79 @@ begin_game_frame(struct game_state *game)
 
 
 static bool
-spawn_next(struct game_state *game)
+spawn_next_group(struct game_state *game)
 {
 	u32 c = game->spawn_bag_count - game->spawn_bag_offset;
 	if (!c)
 		return false;
 
-	struct spawn_item item = game->spawn_bag[game->spawn_bag_offset];
-	if (game->time > (item.time + game->tunnel_begin_t)) {
+	while (game->spawn_bag_offset < game->spawn_bag_count) {
+		struct spawn_item item = game->spawn_bag[game->spawn_bag_offset];
+		if (item.group != game->spawn_group)
+			break;
 		struct entity *entity = 0;
 		switch (item.type) {
 		case ENTITY_PLAYER:
-			entity = init_player(push_entity(game), (u16)item.param);
-			entity->expiration_t = game->level_end_t;
-
+			entity = init_player(push_entity(game));
 			game->player_id = entity->id;
 			game->player_index = entity->index;
 			break;
 
-		case ENTITY_SIMPLE:
-			entity = init_simple(push_entity(game), (u16)item.param);
-			entity->expiration_t = game->level_end_t;
+		case ENTITY_ENEMY:
+			entity = init_enemy(push_entity(game), item.param);
 			break;
 		}
 
 		game->spawn_bag_offset++;
 	}
 
+	game->waiting_for_spawn = false;
+
 	return true;
 }
 
 static bool
-check_win_condition(struct game_state *game)
+begin_spawn_next_group(struct game_state *game)
 {
-	return false;
-#if 0
-	u32 socket_count = 0;
-	for (u32 i = 0; i < game->spawn_bag_count; ++i)
-		if (game->spawn_bag[i].type == ENTITY_SOCKET)
-			socket_count++;
+	u32 c = game->spawn_bag_count - game->spawn_bag_offset;
+	if (!c)
+		return false;
 
-	for (u32 i = 0; i < game->entity_count; ++i)
-		if ((game->entities[i].type & ENTITY_SOCKET) && game->entities[i].parts->content && game->entities[i].z >= 1)
-			--socket_count;
+	struct spawn_item item = game->spawn_bag[game->spawn_bag_offset];
+	game->next_spawn_t = game->time + 2;
+	game->waiting_for_spawn = true;
+	game->spawn_group = item.group;
 
-	return socket_count == 0;
-#endif
+	return true;
 }
+
+static bool
+get_time_of_next_spawn(struct game_state *game, f32 *out)
+{
+	*out = game->next_spawn_t;
+	return game->waiting_for_spawn;
+}
+
+
 
 static void
 run_level_scenario_control(struct game_state *game)
 {
-	if (game->time < game->level_begin_t)
-		game->tunnel_size = WINDOW_WIDTH * (game->time - game->tunnel_begin_t) / (game->level_begin_t - game->tunnel_begin_t);
-	else
-		game->tunnel_size = WINDOW_WIDTH;
+	if (game->game_over) {
+	} else if (game->card_select_mode) {
+		if (game->did_select_card && (game->time - game->card_select_t) >= 1.0f)
+			complete_card_select_mode(game);
+	} else if (!game->waiting_for_spawn) {
+		u32 enemy_count = 0;
+		for (u32 i = 0; i < game->entity_count; ++i)
+			enemy_count += game->entities[i].type & ENTITY_ENEMY;
 
-	if (game->time > game->level_end_t) {
-		if (check_win_condition(game))
-			goto_level(game, game->current_level + 1);
-		else
-			goto_level(game, game->current_level);
+		if (!enemy_count)
+			if (!begin_spawn_next_group(game))
+				goto_level(game, game->current_level + 1);
+	} else if (game->next_spawn_t < game->time) {
+		spawn_next_group(game);
 	}
-
-	spawn_next(game);
 
 	for (u32 i = 0; i < 1; ++i) {
 		game->current_tunnel_segment = (game->current_tunnel_segment + 1) & (TUNNEL_SEGMENT_COUNT - 1);
@@ -1596,8 +2021,11 @@ run_level_scenario_control(struct game_state *game)
 		game->tunnel_segments[game->current_tunnel_segment].left = (u16)((sinf(t) + 2) * depth);
 		game->tunnel_segments[game->current_tunnel_segment].right = (u16)((sinf(t + 3.14f) + 2) * depth);
 
-		if (fabsf(game->current_tunnel_depth - game->next_tunnel_depth) < 0.001f) {
-			game->next_tunnel_depth = 100 + random_f32() * 150;
+		f32 next_spawn;
+		if (game->card_select_mode || (get_time_of_next_spawn(game, &next_spawn) && (next_spawn - game->time) < 1)) { /* < game->level_begin_t) { */
+			game->next_tunnel_depth = 50;
+		} else if (fabsf(game->current_tunnel_depth - game->next_tunnel_depth) < 0.001f) {
+			game->next_tunnel_depth = 100 + random_f32() * game->tunnel_difficulty;
 		}
 		game->current_tunnel_depth += (game->next_tunnel_depth - game->current_tunnel_depth) * 0.1f;
 	}
@@ -1615,76 +2043,70 @@ find_player(struct game_state *game)
 static void
 apply_user_input(struct game_state *game, const struct input_state *input)
 {
-	if (input->dstart > 0) {
-		if (game->time < game->level_begin_t) {
-			game->skip_to_begin = true;
-			game->time_speed_up = 31;
-		} else if (check_win_condition(game) && game->time < game->level_end_t) {
-			game->skip_to_end = true;
-			game->time_speed_up = 31;
-		} else if (game->game_over) {
+	if (game->game_over) {
+		if (input->dstart > 0) {
+			game->game_over = false;
 			goto_level(game, 0);
 		}
-	}
+	} else if (game->card_select_mode && !game->did_select_card) {
+		if (input->dleft > 0) {
+			if (game->selected_card == 0)
+				game->selected_card = game->card_count - 1;
+			else
+				game->selected_card = (game->selected_card - 1) % game->card_count;
 
-	struct entity *player = find_player(game);
-	if (player) {
-		struct entity_part *root = player->parts;
-
-		if (input->left)
-			root->a.x -= 8;
-
-		if (input->right)
-			root->a.x += 8;
-
-		if (input->up)
-			root->a.y -= 8;
-
-		if (input->down)
-			root->a.y += 8;
-
-		s32 mouse_x, mouse_y;
-		u32 mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
-		if (mouse_buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) {
-			struct v2 m = v2((f32)mouse_x, (f32)mouse_y);
-			struct v2 d = sub_v2(m, root->p);
-			root->a = add_v2(root->a, scale_v2(normalize_v2(d), 2));
+			struct sound *s = push_sound(game, SAW, 440, 0.5f);
+			if (s)
+				s->once = true;
 		}
-	}
-}
+		if (input->dright > 0) {
+			game->selected_card = (game->selected_card + 1) % game->card_count;
+			struct sound *s = push_sound(game, SAW, 440, 0.5f);
+			if (s)
+				s->once = true;
+		}
 
+		if (input->dstart > 0) {
+			game->did_select_card = true;
+			game->card_select_t = game->time;
+		}
+	} else if (!game->card_select_mode) {
+		if (input->dstart > 0) {
+			if (game->time < game->level_begin_t) {
+				game->skip_to_begin = true;
+				game->time_speed_up = 31;
+			}
+		}
 
-static bool
-target_nearest_entity_of_type(struct game_state *game, struct entity *entity, enum entity_type type, f32 max_dist) {
-	bool result = false;
+		struct entity *player = find_player(game);
+		if (player) {
+			struct entity_part *root = player->parts;
 
-	struct entity_part *head = entity->parts;
+			if (input->left)
+				root->a.x -= 8;
 
-	f32 min_dist = 100000000;
-	for (u32 i = 0; i < game->entity_count; ++i) {
-		struct entity *other = game->entities + i;
-		if (other->z < 1)
-			continue;
+			if (input->right)
+				root->a.x += 8;
 
-		if (other->expiration_t > 0 && game->time > other->expiration_t)
-			continue;
+			if (input->up)
+				root->a.y -= 8;
 
-		if (other->type & type) {
-			f32 dist = len_v2(sub_v2(head->p, other->parts->p));
-			if (dist > max_dist)
-				continue;
+			if (input->down)
+				root->a.y += 8;
 
-			if (dist < min_dist) {
-				min_dist = dist;
-				entity->target_entity_id = other->id;
-				entity->target_entity_index = i;
-				result = true;
+			game->shield_active = input->start;
+
+			s32 mouse_x, mouse_y;
+			u32 mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
+			if (mouse_buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) {
+				struct v2 m = v2((f32)mouse_x, (f32)mouse_y);
+				struct v2 d = sub_v2(m, root->p);
+				root->a = add_v2(root->a, scale_v2(normalize_v2(d), 2));
 			}
 		}
 	}
-
-	return result;
 }
+
 
 static bool
 entity_should_check_target(struct game_state *game, struct entity *entity)
@@ -1765,11 +2187,10 @@ update_water_eater_ai(struct game_state *game, struct entity *entity)
 static struct particle *
 fire_projectile(struct game_state *game, struct entity *entity, struct entity_part *part, u16 type, u16 width, u16 height)
 {
-	if (game->particle_count >= MAX_PARTICLE_COUNT)
+	struct particle *particle = push_particle(game, type);
+	if (!particle)
 		return 0;
 
-	struct particle *particle = game->particles + (game->particle_count++);
-	ZERO_STRUCT(*particle);
 	struct entity_part *p = &particle->part;
 	particle->type = type;
 	particle->owner_id = entity->id;
@@ -1783,72 +2204,106 @@ fire_projectile(struct game_state *game, struct entity *entity, struct entity_pa
 	p->color = 2;
 	p->p = part->p;
 
-	if (part->dmg & PARTICLE_FAT_BULLET) {
-		p->height = 16;
-		p->mass = p->width * p->height * 100;
-		p->color = 4;
-	}
-
-	if (entity->id == game->player_id) {
+	if (entity->type & ENTITY_PLAYER) {
 		p->v = v2(0, -100);
 	} else {
 		struct v2 player_p = game->entities[game->player_index].parts->p;
 		p->v = scale_v2(normalize_v2(sub_v2(player_p, p->p)), 10);
-		p->color = 2;
 	}
+
+	if (part->dmg & PARTICLE_FAT_BULLET) {
+		p->height = 16;
+		p->mass = p->width * p->height * 100;
+		p->color = 4;
+		p->angle = atan2f(p->v.y, p->v.x) + 3.14f / 2;
+	}
+
 	p->passthrough = false;
 	p->dmg = 1;
 	p->die_at_screen_edge = true;
-	particle->expiration_t = game->level_end_t;
+	p->immune_to_wall = false;
 
 	return particle;
 }
 
-#if 0
+static struct particle *
+fire_guided_gun(struct game_state *game, struct entity *entity, struct entity_part *part, u16 type)
+{
+	struct v2 o = part->p;
+	f32 min_dist = 100000000;
+	struct v2 v = v2(0, 0);
+
+	for (u32 i = 0; i < game->entity_count; ++i) {
+		struct entity *e = game->entities + i;
+		if (e == entity)
+			continue;
+		if ((entity->type & ENTITY_ENEMY) && (e->type & ENTITY_PLAYER) == 0)
+			continue;
+
+		for (u32 j = 0; j < e->part_count; ++j) {
+			struct entity_part *p = e->parts + j;
+
+			struct v2 d = sub_v2(p->p, o);
+			f32 dist = len_v2(d);
+			if (dist < min_dist) {
+				min_dist = dist;
+				v = d;
+			}
+		}
+	}
+
+	if (min_dist < 100000000) {
+		struct particle *particle = fire_projectile(game, entity, part, PARTICLE_BULLET | type, 8, 8);
+		if (!particle)
+			return 0;
+
+		particle->part.v = scale_v2(normalize_v2(v), 50);
+		particle->part.color = 0;  /* UINT8_MAX; */
+		return particle;
+	}
+
+	return 0;
+}
+
+
 static void
 fire_lightning_gun(struct game_state *game, struct entity *entity, struct entity_part *part)
 {
-	struct particle *particle = fire_projectile(game, entity, part, PARTICLE_BULLET | PARTICLE_LIGHTNING_GUIDE, 8, 8);
-	
-			if (game->particle_count < MAX_PARTICLE_COUNT) {
-				struct particle *particle = game->particles + (game->particle_count++);
-				ZERO_STRUCT(*particle);
-				struct entity_part *p = &particle->part;
-				particle->type = part->dmg;
-				particle->owner_id = entity->id;
-				particle->owner_index = (u16)entity_index;
-				particle->owner_part_index = (u16)part_index;
-				p->length = 1;
-				p->width = 8;
-				p->height = 8;
-				p->mass = p->width * p->height * 100;
-				/* p->color = part->dmg & PARTICLE_LIGHTNING_GUIDE ? UINT8_MAX : 2; */
-				p->color = 2;
-				p->p = part->p;
-
-				if (part->dmg & PARTICLE_FAT_BULLET) {
-					p->height = 16;
-					p->mass = p->width * p->height * 100;
-					p->color = 4;
-				}
-
-				if (entity->id == game->player_id) {
-					p->v = v2(0, -100);
-				} else {
-					struct v2 player_p = game->entities[game->player_index].parts->p;
-					p->v = scale_v2(normalize_v2(sub_v2(player_p, p->p)), 10);
-					p->color = 2;
-				}
-				p->passthrough = false;
-				p->dmg = 1;
-				p->die_at_screen_edge = true;
-				particle->expiration_t = game->level_end_t;
-			}
-
-			/* f32 fire_interval = 1; */
-			part->next_fire_t = game->time + 0.2f;
+	fire_guided_gun(game, entity, part, PARTICLE_LIGHTNING_GUIDE);
 }
-#endif
+
+static void
+fire_fireball(struct game_state *game, struct entity *entity, struct entity_part *part)
+{
+	struct particle *particle = fire_guided_gun(game, entity, part, PARTICLE_FIREBALL);
+	if (!particle)
+		return;
+	particle->part.width = particle->part.height = 32;
+	particle->part.mass = particle->part.width * particle->part.height * 100;
+	particle->part.color = 7;
+	particle->part.dmg = 10;
+}
+
+static void
+fire_regular(struct game_state *game, struct entity *entity, struct entity_part *part)
+{
+	struct particle *particle = fire_projectile(game, entity, part, PARTICLE_BULLET, 8, 8);
+	if (!particle)
+		return;
+}
+
+static void
+fire_fat(struct game_state *game, struct entity *entity, struct entity_part *part)
+{
+	struct particle *particle = fire_projectile(game, entity, part, PARTICLE_BULLET, 8, 8);
+	if (!particle)
+		return;
+	particle->part.height = 16;
+	particle->part.mass = particle->part.width * particle->part.height * 100;
+	particle->part.color = 4;
+	particle->part.dmg = 2;
+}
+
 
 static void
 update_entity_ai(struct game_state *game)
@@ -1878,104 +2333,67 @@ update_entity_ai(struct game_state *game)
 			}
 		}
 
-		bool reverse_z = entity->expiration_t > 0 && game->time > entity->expiration_t;
-		const f32 z_speed = 0.1f;
+		bool reverse_z = (entity->expire && game->time > entity->expiration_t) || game->card_select_mode;
+		const f32 z_speed = 0.08f;
 
-		while (reverse_z && entity->z > 1) {
-			entity->accum_z -= entity->z;
+		while (reverse_z && entity->z > 1)
 			entity->z -= z_speed;
-		}
 
-		if (entity->z < 1 && entity->accum_z > 0) {
+		if (entity->z < 1) {
 			entity->z += reverse_z ? -z_speed : z_speed;
-
-			if (false) {
-				f32 zsqrd = entity->z * entity->z;
-				f32 r1 = zsqrd * WINDOW_WIDTH / 2.0f + 50;
-				f32 r2 = zsqrd * WINDOW_HEIGHT / 2.0f;
-
-				f32 phi = fmodf((f32)entity->seed, 2 * 3.14f);
-
-				entity->target = add_v2(screen_center, v2(r1 * cosf(2048 * 3.14f * entity->z / entity->accum_z + phi), r2 * sinf(2048 * 3.14f * entity->z / entity->accum_z + phi)));
-				entity->pull_of_target = 1 / compute_relative_mass_of_entity_head(entity);
-				entity->has_target = true;
-				entity->z += reverse_z ? -z_speed : z_speed;
-				if (entity->z > 1)
-					entity->has_target = false;
-			}
 		} else if (entity->z < 2) {
 			entity->z += reverse_z ? -z_speed : z_speed;
 		}
 
-		if (entity->z < 2)
-			entity->accum_z += reverse_z ? -entity->z : entity->z;
-
 		if (entity->z < 0) {
 			entity->z = 0;
-			entity->disposed = true;
-		}
-		if (entity->accum_z < 0)
-			entity->accum_z = 0;
-
-		switch (entity->type) {
-		case ENTITY_PLAYER:
-			break;
-
-		case ENTITY_SIMPLE:
-			update_simple_ai(game, entity);
-			break;
+			if (entity->expire)
+				entity->disposed = true;
 		}
 
-
-		for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
-			struct entity_part *part = entity->parts + part_index;
-			/* if (part->parent_index == part->index) */
-			/* 	continue; */
-
-			if (!part->dmg)
-				continue;
-			if (game->time < part->next_fire_t)
-				continue;
-
-			if (game->particle_count < MAX_PARTICLE_COUNT) {
-				struct particle *particle = game->particles + (game->particle_count++);
-				ZERO_STRUCT(*particle);
-				struct entity_part *p = &particle->part;
-				particle->type = part->dmg;
-				particle->owner_id = entity->id;
-				particle->owner_index = (u16)entity_index;
-				particle->owner_part_index = (u16)part_index;
-				p->length = 1;
-				p->width = 8;
-				p->height = 8;
-				p->mass = p->width * p->height * 100;
-				/* p->color = part->dmg & PARTICLE_LIGHTNING_GUIDE ? UINT8_MAX : 2; */
-				p->color = 2;
-				p->p = part->p;
-
-				if (part->dmg & PARTICLE_FAT_BULLET) {
-					p->height = 16;
-					p->mass = p->width * p->height * 100;
-					p->color = 4;
+		if (!game->card_select_mode) {
+			switch (entity->type) {
+			case ENTITY_PLAYER:
+				if (entity->z < 1) {
+					head->p = v2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 + 200);
+					struct v2 d = normalize_v2(sub_v2(v2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 + 200), head->p));
+					head->a = add_v2(head->a, scale_v2(d, 2000));
 				}
+				break;
 
-				if (entity->id == game->player_id) {
-					p->v = v2(0, -100);
-				} else {
-					struct v2 player_p = game->entities[game->player_index].parts->p;
-					p->v = scale_v2(normalize_v2(sub_v2(player_p, p->p)), 10);
-					p->color = 2;
-				}
-				p->passthrough = false;
-				p->dmg = 1;
-				p->die_at_screen_edge = true;
-				particle->expiration_t = game->level_end_t;
+			case ENTITY_ENEMY:
+				update_simple_ai(game, entity);
+				break;
 			}
 
-			/* f32 fire_interval = 1; */
-			part->next_fire_t = game->time + 0.15f;
-		}
+			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
+				struct entity_part *part = entity->parts + part_index;
+				/* if (part->parent_index == part->index) */
+				/* 	continue; */
 
+				if (!part->dmg || !part->fire_rate)
+					continue;
+				if (game->time < part->next_fire_t)
+					continue;
+
+				if (part->dmg & PARTICLE_LIGHTNING_GUIDE)
+					fire_lightning_gun(game, entity, part);
+				else if (part->dmg & PARTICLE_FIREBALL)
+					fire_fireball(game, entity, part);
+				else if (part->dmg & PARTICLE_FAT_BULLET)
+					fire_fat(game, entity, part);
+				else if (part->dmg & PARTICLE_BULLET)
+					fire_regular(game, entity, part);
+
+				f32 r = (f32)4.25f / part->fire_rate;
+				part->next_fire_t = game->time + r;
+				/* f32 r = 1.0f / UINT8_MAX; */
+				/* part->next_fire_t = game->time + r * (UINT8_MAX - part->fire_rate); */
+			}
+		} else if (entity->type == ENTITY_PLAYER) {
+			struct v2 d = normalize_v2(sub_v2(v2(WINDOW_WIDTH / 2, 0), head->p));
+			head->a = add_v2(head->a, scale_v2(d, 1000));
+		}
 
 		/* switch (entity->type) { */
 		/* case ENTITY_WORM: */
@@ -1989,7 +2407,7 @@ update_entity_ai(struct game_state *game)
 
 		if (entity->target_entity_id && find_entity_by_id(game, entity->target_entity_id, &entity->target_entity_index)) {
 			struct entity *target = game->entities + entity->target_entity_index;
-			if (target->disposed || (target->expiration_t > 0 && game->time > target->expiration_t)) {
+			if (target->disposed || (target->expire && game->time > target->expiration_t)) {
 				entity->has_target = false;
 				entity->target_entity_id = 0;
 			} else {
@@ -2026,21 +2444,27 @@ update_spring_physics(struct game_state *game)
 				f32 force = len_v2(d) * K;
 
 				part->a = add_v2(part->a, scale_v2(d, force / part->mass));
-				parent->a = add_v2(parent->a, scale_v2(d, -force / parent->mass));
+				if (parent->index)
+					parent->a = add_v2(parent->a, scale_v2(d, -force / parent->mass));
 			}
 			part->a = sub_v2(part->a, scale_v2(part->v, 0.6f));
 		}
 	}
 }
 
+
 static void
 check_for_collisions_against_entities(struct game_state *game, struct entity_part *part, struct entity_part_owner owner, struct v2 *new_p, struct v2 v)
 {
-	for (u32 other_index = 0; other_index < game->entity_count; ++other_index) {
-		if (other_index == owner.entity_index && (!part->internal_collisions))
-			continue;
+	struct entity *entity = 0;
+	if (find_entity_by_id(game, owner.entity_id, &owner.entity_index))
+		entity = game->entities + owner.entity_index;
 
+	for (u32 other_index = 0; other_index < game->entity_count; ++other_index) {
 		struct entity *other = game->entities + other_index;
+
+		if (owner.entity_id == other->id && (!part->internal_collisions))
+			continue;
 
 		if (other->z < 1)
 			continue;
@@ -2048,13 +2472,13 @@ check_for_collisions_against_entities(struct game_state *game, struct entity_par
 		if (other->disposed)
 			continue;
 
-		for (u32 other_part_index = 0; other_part_index < other->part_count; ++other_part_index) {
-			if (other_index == owner.entity_index && part->index == other_part_index)
-				continue;
+		if (owner.entity_id != other->id && entity && (entity->type & ENTITY_ENEMY) && (other->type & ENTITY_ENEMY))
+			continue;
 
+		for (u32 other_part_index = 0; other_part_index < other->part_count; ++other_part_index) {
 			struct entity_part *other_part = other->parts + other_part_index;
 
-			if (other_index == owner.entity_index && !other_part->internal_collisions)
+			if (other->id == owner.entity_id && (part->index == other_part_index || !other_part->internal_collisions))
 				continue;
 
 			if (other_part->disposed)
@@ -2070,35 +2494,18 @@ check_for_collisions_against_entities(struct game_state *game, struct entity_par
 				if (!part->suspended_for_frame && !other->suspended_for_frame && !other_part->suspended_for_frame) {
 					if (!owner.direct) {
 						if (game->particles[owner.particle_index].type & PARTICLE_BULLET) {
-							if (other_part->hp > part->dmg)
-								other_part->hp -= part->dmg;
-							else
-								other_part->disposed = true;
-							other_part->hurt = 1;
-							part->disposed = true;
+							if (other->id == game->player_id && game->shield_active && game->shield_energy > 0) {
+								spawn_debris(game, owner, 9, other_part->p, max_u(part->dmg, 10), false);
+							} else {
+								if (other_part->hp > part->dmg)
+									other_part->hp -= part->dmg;
+								else
+									other_part->disposed = true;
+								other_part->hurt = 1;
+								part->disposed = true;
 
-							u32 more_p = other_part->disposed ? 100 : 10;
-							while ((more_p--) && game->particle_count < MAX_PARTICLE_COUNT) {
-								struct particle *particle = game->particles + (game->particle_count++);
-								ZERO_STRUCT(*particle);
-
-								particle->expiration_t = game->time + 1;
-								struct entity_part *p = &particle->part;
-								particle->type = more_p == 99 ? PARTICLE_EXPLOSION : PARTICLE_DEBRIS;
-								particle->owner_id = owner.entity_id;
-								particle->owner_index = (u16)owner.entity_index;
-								particle->owner_part_index = owner.entity_part_index;
-								p->length = 1;
-								p->width = (u16)random_int(4, 8);
-								p->height = p->width;
-								p->mass = p->width * p->height;
-								p->color = other_part->color;
-								p->p = other_part->p;
-								/* p->v = v2((random_f32() - 0.5f) , (random_f32() - 0.5f) * 100); */
-								p->a = v2((random_f32() - 0.5f) * 100 / p->width, (random_f32() - 0.5f) * 100 / p->height);
-								p->passthrough = true;
-								p->die_at_screen_edge = particle->type == PARTICLE_DEBRIS;
-								p->immune_to_wall = particle->type == PARTICLE_EXPLOSION;
+								if (!other_part->disposed)
+									spawn_debris(game, owner, other_part->color, other_part->p, max_u(part->dmg, 10), false);
 							}
 
 							if ((game->particles[owner.particle_index].type & PARTICLE_LIGHTNING_GUIDE)) {
@@ -2107,11 +2514,6 @@ check_for_collisions_against_entities(struct game_state *game, struct entity_par
 							}
 						}
 					}
-
-					/* try_seed_touch_water(game, entity, part, other, other_part); */
-					/* try_worm_eat_food(game, entity, part, other, other_part); */
-					/* try_water_eater_eat_water(game, entity, part, other, other_part); */
-					/* try_gem_touch_socket(game, entity, part, other, other_part); */
 				}
 			}
 
@@ -2307,13 +2709,49 @@ update_newtonian_physics(struct game_state *game)
 			particle->part.audio_gen = particle->expiration_t - game->time;
 		}
 
+		if ((particle->type & PARTICLE_FIREBALL)) {
+			u32 more_p = 3;
+			while ((more_p--)) {
+				struct particle *pp = push_particle(game, PARTICLE_DEBRIS);
+				if (!pp)
+					return;
+
+				pp->expiration_t = game->time + 1;
+				struct entity_part *p = &pp->part;
+				pp->type = PARTICLE_DEBRIS;
+				pp->owner_id = particle->owner_id;
+				pp->owner_index = (u16)particle->owner_index;
+				pp->owner_part_index = particle->owner_part_index;
+				p->length = 1;
+				p->width = (u16)random_int(8, 16);
+				p->height = p->width;
+				p->mass = p->width * p->height;
+
+				f32 r = random_f32();
+				if (r < 0.2f)
+					p->color = 0;
+				else if (r < 0.4f)
+					p->color = 7;
+				else
+					p->color = 2;
+
+				p->angle = random_f32();
+				p->p = particle->part.p;
+				p->v = v2((random_f32() - 0.5f) , (random_f32() - 0.5f));
+				p->passthrough = true;
+				p->die_at_screen_edge = true;
+				p->immune_to_wall = false;
+			}
+		}
+
 		struct entity_part_owner owner = { .entity_id = particle->owner_id, .entity_part_index = particle->owner_part_index, .particle_index = particle_index };
 		u32 index;
-		if (find_entity_by_id(game, particle->owner_id, &index)) {
+		if (find_entity_by_id(game, particle->owner_id, &index))
 			owner.entity_index = (u16)index;
-			update_newtonian_physics_for_part(game, &particle->part, owner);
-		} else {
-			particle->part.disposed = true;
+		update_newtonian_physics_for_part(game, &particle->part, owner);
+
+		if ((particle->type & PARTICLE_FIREBALL) && particle->part.disposed) {
+			spawn_explosion(game, owner, 2, particle->part.p, 200);
 		}
 	}
 }
@@ -2321,6 +2759,16 @@ update_newtonian_physics(struct game_state *game)
 static void
 process_triggered_events(struct game_state *game)
 {
+	if (game->shield_active) {
+		game->shield_energy -= 0.05f;
+		if (game->shield_energy < 0)
+			game->shield_energy = 0;
+	} else {
+		game->shield_energy += 0.01f;
+		if (game->shield_energy > 1)
+			game->shield_energy = 1;
+	}
+
 	for (u32 event_index = 0; event_index < game->event_count; ++event_index) {
 		struct game_event *e = game->events + event_index;
 		switch (e->type) {
@@ -2338,50 +2786,18 @@ process_triggered_events(struct game_state *game)
 	}
 }
 
-static struct sound *
-push_sound(struct game_state *game, enum waveform_type type, u16 freq, f32 amp)
+static void
+stop_track(struct game_state *game, u16 index)
 {
-	if (game->sound_count >= MAX_SOUND_COUNT)
-		return 0;
+	if (index > game->track_count)
+		return;
 
-	struct sound *s = game->sounds + (game->sound_count++);
-	ZERO_STRUCT(*s);
-
-	s->type = type;
-	s->wave.freq = freq;
-	s->wave.amp = amp;
-
-	return s;
-}
-
-static struct sound *
-push_tagged_sound(struct game_state *game, enum waveform_type type, u16 freq, f32 amp, u16 top_tag, u16 child_tag)
-{
-	if (game->sound_count >= MAX_SOUND_COUNT)
-		return 0;
-
-	struct sound *s = game->sounds + (game->sound_count++);
-	ZERO_STRUCT(*s);
-
-	s->type = type;
-	s->tag = top_tag;
-	s->wave.freq = freq;
-	s->wave.amp = amp;
-	s->wave.tag = child_tag;
-
-	return s;
-}
-
-
-static struct sound *
-find_sound_by_tag(struct game_state *game, u16 top_tag, u16 child_tag)
-{
+	SDL_LockAudioDevice(1);
 	for (u32 i = 0; i < game->sound_count; ++i) {
-		struct sound *s = game->sounds + i;
-		if (s->tag == top_tag && s->wave.tag == child_tag)
-			return s;
+		if (game->sounds[i].tag == index && game->sounds[i].wave.tag)
+			game->sounds[i].disposed = true;
 	}
-	return 0;
+	SDL_UnlockAudioDevice(1);
 }
 
 static void
@@ -2394,15 +2810,23 @@ play_track(struct game_state *game, u16 index)
 
 	SDL_LockAudioDevice(1);
 
+	f32 t = (f32)game->played_audio_sample_count / AUDIO_FREQ;
+
+	if (game->last_played_track != index) {
+		stop_track(game, (u16)game->last_played_track);
+		track->current_event = 0;
+		track->last_event_status = 0;
+		track->last_event_time = t;
+	}
+	game->last_played_track = index;
+
 	f32 volume = 0.5f;
 
 	struct track_event e = track->events[track->current_event];
 	/* f32 t = game->real_time; */
 	/* f32 next_t = track->last_event_time + (f32)e.t / 1000.0f; */
 
-	f32 t = (f32)game->played_audio_sample_count / AUDIO_FREQ;
-
-	f32 next_frame_t = track->last_event_time + (f32)e.t / 1200.0f;
+	f32 next_frame_t = track->last_event_time + (f32)e.t / track->tempo_inverse_scale; /* 1200.0f; */
 
 	/* u32 frame = game->frame_index; */
 	/* u32 next_frame = track->last_event_frame + e.t / 15; */
@@ -2506,7 +2930,7 @@ update_audio(struct game_state *game)
 	}
 	for (u32 particle_index = 0; particle_index < game->particle_count; ++particle_index) {
 		struct particle *particle = game->particles + particle_index;
-		struct entity_part *part = &particle->part;
+		/* struct entity_part *part = &particle->part; */
 		if (particle->type == PARTICLE_EXPLOSION) {
 			f32 ttl = particle->expiration_t - game->time;
 			if (ttl > 0) {
@@ -2522,6 +2946,16 @@ update_audio(struct game_state *game)
 				if (s)
 					s->once = true;
 			}
+		} else if (particle->type & PARTICLE_FIREBALL) {
+			f32 elapsed = game->time - particle->spawn_t;
+			struct sound *s = push_sound(game, SINE, 200 + (u16)(120 * elapsed), 0.5f);
+			if (s)
+				s->once = true;
+
+			s = push_sound(game, WHITENOISE, 0, fmodf(elapsed, 1) / 2);
+			if (s)
+				s->once = true;
+
 		}
 	}
 
@@ -2574,7 +3008,7 @@ sort_entity_indices_by_z(const void *x, const void *y)
 }
 
 static f32
-make_lightning_to_point(struct game_state *game, SDL_Renderer *renderer, struct v2 from, struct v2 to, f32 z, f32 elapsed, f32 perturbation)
+make_lightning_to_point(__attribute__((unused)) struct game_state *game, SDL_Renderer *renderer, struct v2 from, struct v2 to, f32 z, f32 elapsed, f32 perturbation)
 {
 	struct v2 d = sub_v2(to, from);
 
@@ -2591,7 +3025,7 @@ make_lightning_to_point(struct game_state *game, SDL_Renderer *renderer, struct 
 			struct v2 tangent = normalize_v2(v2(d.y, -d.x));
 			p = add_v2(p, scale_v2(tangent, sinf(r * 5 * 3.14f + t + perturbation * 3.14f) * fmodf(t, 25)));
 
-			fill_rect(renderer, (s32)p.x, (s32)p.y, 8, 8, c);
+			fill_cell_c(renderer, (s32)p.x, (s32)p.y, 8, 8, c);
 			r += 0.01f + fmodf(t, 1) * 0.5f;
 
 			++count;
@@ -2599,8 +3033,6 @@ make_lightning_to_point(struct game_state *game, SDL_Renderer *renderer, struct 
 	}
 
 	f32 power = (f32)count / 400;
-	if (game->game_over)
-		power = 1;
 
 	return power;
 	/* e1->parts->audio_gen += power * 0.12f; */
@@ -2733,7 +3165,7 @@ render_entity_part(struct game_state *game,
 		}
 #endif
 
-		u8 alpha = part->max_alpha ? part->max_alpha : 0xFF;
+		u8 alpha = 0xFF;
 
 
 		u32 segment_1 = (u32)(part_p.y / TUNNEL_SEGMENT_THICKNESS);
@@ -2751,8 +3183,11 @@ render_entity_part(struct game_state *game,
 
 		fill_cell_(renderer, c, alpha, (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height);
 
-		if (part->hurt > 0)
-			fill_cell_(renderer, 3, (u8)(part->hurt * 0xff), (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height);
+		if (part->hurt > 0) {
+			/* fill_rect(renderer, (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height, color(0xff, 0xff, 0xff, (u8)(part->hurt * 0xff))); */
+			fill_cell_c(renderer, (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height, color(0xff, 0xff, 0xff, 0xff));
+			/* fill_cell_(renderer, 3, (u8)(part->hurt * 0xff), (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height); */
+		}
 
 		/* if (part->content) { */
 		/* 	fill_cell_(renderer, part->content, alpha, (s32)part_p.x, (s32)part_p.y, 10, 10); */
@@ -2762,7 +3197,7 @@ render_entity_part(struct game_state *game,
 		/* if (part->accept) { */
 		/* 	fill_cell_(renderer, part->accept, 200, (s32)part_p.x, (s32)(part_p.y - part->render_size / 2.0f), (s32)part->render_size, 10); */
 		/* } */
-	} else {
+	} else if (z > 0) {
 		u8 max_alpha = (u8)(0xE0);
 		u8 alpha = (u8)(max_alpha * z);
 
@@ -2770,6 +3205,14 @@ render_entity_part(struct game_state *game,
 		special_fill_cell_(renderer, c, alpha, (s32)(part_p.x / z), (s32)(part_p.y / z), (s32)(part->width), (s32)(part->height));
 		SDL_RenderSetScale(renderer, scale, scale);
 	}
+}
+
+static void
+swap_u8s(u8 *array, u32 i, u32 j)
+{
+	u8 tmp = array[i];
+	array[i] = array[j];
+	array[j] = tmp;
 }
 
 static void
@@ -2783,23 +3226,15 @@ render_game(struct game_state *game,
 
 	struct color white = color(0xFF, 0xFF, 0xFF, 0xFF);
 
-	f32 elapsed_t = game->time - game->level_begin_t;
-	f32 level_progress = elapsed_t / (game->level_end_t - game->level_begin_t);
-	if (level_progress < 0)
-		level_progress = 0;
+	/* f32 elapsed_t = game->time - game->level_begin_t; */
 
 	struct v2 o = screen_center; /* v2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2); */
 	f32 len_o = len_v2(o) + 100;
 
-	f32 scale = 1 + game->audio_mix_power * 0.12f;
+	f32 scale = 1 + game->audio_mix_power * 0.24f;
 
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 	SDL_RenderSetScale(renderer, scale, scale);
-
-	if (false){
-		for (s32 i = 1; i < 3; ++i)
-			fill_rect(renderer, i * 101, i * 101, 100, 100, color(0xff, 0xff, 0xff, 0x80));
-	}
 
 	/* NOTE(omid): Render tunnel. */
 	if (true) {
@@ -2815,7 +3250,36 @@ render_game(struct game_state *game,
 		for (u32 i = 0; i < visible_count; ++i) {
 			u32 segment_index = (game->current_tunnel_segment - i) & (TUNNEL_SEGMENT_COUNT - 1);
 			struct tunnel_segment segment = game->tunnel_segments[segment_index];
-			u8 base_color = (u8)(game->current_level ) % ARRAY_COUNT(BASE_COLORS);
+			u8 base_color = 0;
+			/* struct color dark = DARK_COLORS[(u8)(game->current_level + 1) % ARRAY_COUNT(DARK_COLORS)]; */
+			struct color accent = LIGHT_COLORS[(u8)(game->current_level + 1) % ARRAY_COUNT(LIGHT_COLORS)];
+			u8 pows[3] = { 2, 2, 2 };
+			/* if (accent.r > accent.g && accent.r > accent.b) { */
+			/* 	pows[0] = 1; */
+			/* 	if (accent.g > accent.b) { */
+			/* 		pows[1] = 2; */
+			/* 		pows[2] = 3; */
+			/* 	} else { */
+			/* 		pows[1] = 3; */
+			/* 		pows[2] = 2; */
+			/* 	} */
+			/* } else if (accent.r > accent.g) { */
+			/* 	pows[0] = 2; */
+			/* 	pows[1] = 3; */
+			/* 	pows[2] = 1; */
+			/* } else if (accent.r > accent.b) { */
+			/* 	pows[0] = 2; */
+			/* 	pows[1] = 1; */
+			/* 	pows[2] = 3; */
+			/* } else if (accent.g > accent.b) { */
+			/* 	pows[0] = 3; */
+			/* 	pows[1] = 1; */
+			/* 	pows[2] = 2; */
+			/* } else { */
+			/* 	pows[0] = 3; */
+			/* 	pows[1] = 2; */
+			/* 	pows[2] = 1; */
+			/* } */
 
 			f32 r = 0;
 			f32 w = 20;
@@ -2846,7 +3310,12 @@ render_game(struct game_state *game,
 
 				for (s32 x = 0; x < 10; ++x) {
 					f32 s = (f32)x / 9.0f;
-					struct color c = color((u8)(s * s * s * 0xFF), (u8)(s * s * 0xFF), (u8)(s * 0xFF), 0x80);
+					/* struct color c = color((u8)(s * s * s * accent.r), (u8)(s * s * accent.g), (u8)(s * accent.b), 0xA0); */
+
+					f32 sr = powf(s, pows[0]);
+					f32 sg = powf(s, pows[1]);
+					f32 sb = powf(s, pows[2]);
+					struct color c = color((u8)(sr * accent.r), (u8)(sg * accent.g), (u8)(sb * accent.b), 0x80);
 					fill_rect(renderer, (s32)(segment.left + (f32)x * segment_width), y, (s32)(segment_width), h, c);
 				}
 			}
@@ -2880,43 +3349,15 @@ render_game(struct game_state *game,
 
 				for (s32 x = 0; x < 10; ++x) {
 					f32 s = (f32)x / 9.0f;
-					struct color c = color((u8)(s * s * s * 0xFF), (u8)(s * s * 0xFF), (u8)(s * 0xFF), 0x80);
+					/* struct color c = color((u8)(s * s * s * accent.r), (u8)(s * s * accent.g), (u8)(s * accent.b), 0x80); */
+					f32 sr = powf(s, pows[0]);
+					f32 sg = powf(s, pows[1]);
+					f32 sb = powf(s, pows[2]);
+					struct color c = color((u8)(sr * accent.r), (u8)(sg * accent.g), (u8)(sb * accent.b), 0x80);
 					fill_rect(renderer, (s32)(WINDOW_WIDTH - segment.right - (f32)(x + 1) * segment_width), y, (s32)(segment_width), h, c);
 				}
 			}
 
-		}
-	}
-
-	/* NOTE(omid): Render shadows. */
-	if (false) {
-		for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
-			const struct entity *entity = game->entities + entity_index;
-			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
-				const struct entity_part *part = entity->parts + part_index;
-				const struct entity_part *parent = entity->parts + part->parent_index;
-
-				struct v2 ep = parent->p;
-				struct v2 pp = part->p;
-
-				struct v2 from_c = sub_v2(ep, o);
-				f32 dist_to_center = len_v2(from_c);
-				f32 scale = 2 * dist_to_center / len_o;
-
-				struct v2 offset = scale_v2(normalize_v2(from_c), 30);
-				struct v2 shadow = add_v2(pp, offset);
-
-				u8 max_alpha = (u8)(0xE0 * sqrtf(dist_to_center / len_o));
-				u8 alpha = max_alpha;
-				if (game->time < game->level_begin_t) {
-					f32 tunnel_d = game->level_begin_t - game->tunnel_begin_t;
-					f32 fade_progress = (game->time - game->tunnel_begin_t) / tunnel_d;
-					alpha = (u8)(max_alpha * fade_progress);
-				}
-
-				struct color c = color(0x00, 0x00, 0x00, alpha);
-				render_rect(renderer, c, (s32)shadow.x, (s32)shadow.y, (s32)(part->width * scale), (s32)(part->height * scale), false);
-			}
 		}
 	}
 
@@ -2928,16 +3369,8 @@ render_game(struct game_state *game,
 
 			for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
 				const struct entity_part *part = entity->parts + (entity->part_count - part_index - 1);
-				/* u16 depth = compute_entity_part_depth(entity, part); */
-				/* f32 z = entity->z - depth * 0.02f; */
-				/* if (z < 0) */
-				/* 	z = 0; */
 				f32 z = entity->z;
-
 				render_entity_part(game, renderer, part, z, scale);
-
- 				/* if (part->hurt > 0) */
-				/* 	make_lightning_to_point(game, renderer, game->entities + game->player_index, part->p); */
 			}
 
 			if (entity->type == ENTITY_LIGHTNING) {
@@ -2957,7 +3390,7 @@ render_game(struct game_state *game,
 						f32 ttl = entity->expiration_t - game->time;
 						f32 z = ttl * 10;
 						f32 power = make_lightning_to_point(game, renderer, p1->p, p2->p, z, t, r);
-						entity->parts->audio_gen = power * 0.12f; /* * 0.12f; */
+						entity->parts->audio_gen = power * 0.24f; /* * 0.12f; */
 					}
 				}
 			}
@@ -2965,13 +3398,19 @@ render_game(struct game_state *game,
 
 		for (u32 particle_index = 0; particle_index < game->particle_count; ++particle_index) {
 			f32 ttl = game->particles[particle_index].expiration_t - game->time;
+			if (ttl < 0)
+				continue;
 
 			struct entity_part *part = &game->particles[particle_index].part;
 			struct v2 part_p = part->p;
 			u8 c = (u8)part->color;
 			if (c == UINT8_MAX)
 				continue;
-			fill_rotated_rect(game, renderer, (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height, (f64)part->angle, BASE_COLORS[c]);
+
+			struct color color = BASE_COLORS[c];
+			if (ttl < 1)
+				color.a = (u8)(ttl * 0xff);
+			fill_rotated_rect(game, renderer, (s32)part_p.x, (s32)part_p.y, (s32)part->width, (s32)part->height, (f64)part->angle, color);
 
 			/* if (ttl > 0 && ttl < 1) */
 			/* 	render_entity_part(game, renderer, &game->particles[particle_index].part, ttl, scale); */
@@ -2980,8 +3419,108 @@ render_game(struct game_state *game,
 		}
 	}
 
-	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+	if (game->shield_active && game->shield_energy > 0) {
+		if (find_entity_by_id(game, game->player_id, &game->player_index)) {
+			struct entity *player = game->entities + game->player_index;
+			if (player->part_count) {
+				struct entity_part *p = player->parts;
+
+				fill_cell_(renderer, 9, 0x80, (s32)p->p.x, (s32)p->p.y, p->width * 2, p->height * 2);
+			}
+		}
+	}
+
+	/* SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE); */
 	SDL_RenderSetScale(renderer, 1, 1);
+
+	for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
+		const struct entity *entity = game->entities + entity_index;
+		for (u32 part_index = 0; part_index < entity->part_count; ++part_index) {
+			const struct entity_part *part = entity->parts + (entity->part_count - part_index - 1);
+			if (part->hurt > 0) {
+				u16 hp = part->hp / 2;
+				s32 x = (s32)(part->p.x - (hp * 7) / 2);
+				s32 y = (s32)(part->p.y - part->height / 2 - 9);
+				for (u16 i = 0; i < hp; ++i)
+					fill_rect(renderer, (s32)(x + i * 7), y, 5, 7, color(0xff, 0xff, 0xff, 0xff));
+			}
+		}
+	}
+
+
+	if (game->card_select_mode && game->card_select_start_t < game->time) {
+		struct color c = BASE_COLORS[0];
+		struct color selected_c = BASE_COLORS[1];
+		u32 card_count = game->card_count;
+
+		s32 outer_padding = 200;
+		s32 total_width = WINDOW_WIDTH - 2 * outer_padding;
+		s32 width = 200;
+		s32 total_padding = total_width - width * (s32)card_count;
+		s32 padding = total_padding / 4;
+		s32 height = 300;
+		s32 top = (WINDOW_HEIGHT - height) / 2;
+
+		s32 x = outer_padding + padding;
+		for (u32 i = 0; i < card_count; ++i) {
+			u8 alpha = 0xff;
+			f32 elapsed_since_start = game->time - game->card_select_start_t;
+			if (game->did_select_card) {
+				f32 ttl = (game->card_select_t + 1) - game->time;
+				if (ttl < 0)
+					ttl = 0;
+				if (ttl > 1)
+					ttl = 1;
+				alpha = (u8)(0xff * ttl);
+			} else if (elapsed_since_start < 0.5f) {
+				alpha = (u8)(0xff * elapsed_since_start * 2);
+			}
+			c.a = alpha;
+			selected_c.a = alpha;
+
+			fill_rect(renderer, x, top, width, height, game->selected_card == i ? selected_c : c);
+
+			if (game->did_select_card && game->selected_card == i) {
+				f32 end = game->card_select_t + 1;
+				f32 elapsed = (game->time - game->card_select_t);
+				f32 progress = fmodf(elapsed / (end - game->card_select_t), 1);
+				u16 step = ((u16)(progress * 100) / 10) * 10;
+
+				fill_rect(renderer, x, top, width, height, color(0xff, 0xff, 0xff, alpha));
+
+				struct sound *s = push_sound(game, SINE, step * 10, 0.5f);
+				if (s)
+					s->once = true;
+			}
+
+			if (!game->did_select_card || game->selected_card == i)
+				draw_string(renderer, font, game->cards[i].name, x + width / 2, top + height / 2 - FONT_SIZE / 2, TEXT_ALIGN_CENTER, color(0xff, 0xff, 0xff, alpha));
+			x += padding + width;
+		}
+	}
+
+	if (find_entity_by_id(game, game->player_id, &game->player_index)) {
+		s32 y = 5 + SMALL_FONT_SIZE;
+		struct entity *player = game->entities + game->player_index;
+		struct color c = color(0xff, 0xff, 0xff, 0xff);
+
+		draw_string_f(renderer, small_font, 25, y, TEXT_ALIGN_LEFT, white, "SHIELD");
+		y += SMALL_FONT_SIZE + 2;
+		u16 shield = (u16)(32 * game->shield_energy);
+		for (u16 i = 0; i < shield; ++i)
+			fill_rect(renderer, 25 + i * 12, y, 10, SMALL_FONT_SIZE, c);
+		y += SMALL_FONT_SIZE + 3;
+
+		for (u32 part_index = 0; part_index < player->part_count; ++part_index) {
+			struct entity_part *part = player->parts + part_index;
+			if (part->name)
+				draw_string_f(renderer, small_font, 25, y, TEXT_ALIGN_LEFT, white, "%s", part->name);
+			y += SMALL_FONT_SIZE + 2;
+			for (u16 i = 0; i < part->hp; ++i)
+				fill_rect(renderer, 25 + i * 12, y, 10, SMALL_FONT_SIZE, c);
+			y += SMALL_FONT_SIZE + 3;
+		}
+	}
 
 	/* NOTE(omid): Render on-screen text. */
 
@@ -2989,7 +3528,7 @@ render_game(struct game_state *game,
 #if 0
 	draw_string_f(renderer, small_font, 5, 5, TEXT_ALIGN_LEFT, white, "T: %f (%uX)", (f64)game->time, game->time_speed_up + 1);
 #endif
-	draw_string_f(renderer, small_font, WINDOW_WIDTH, WINDOW_HEIGHT - SMALL_FONT_SIZE, TEXT_ALIGN_RIGHT, white, "A game by Omid Ghavami Zeitooni");
+	draw_string_f(renderer, small_font, WINDOW_WIDTH, WINDOW_HEIGHT - SMALL_FONT_SIZE, TEXT_ALIGN_RIGHT, white, "odyssjii");
 
 	/* draw_string_f(renderer, font, WINDOW_WIDTH / 2, 0, TEXT_ALIGN_CENTER, white, "SCORE: %u", game->score); */
 
@@ -3032,16 +3571,10 @@ render_game(struct game_state *game,
 
 	if (game->game_over) {
 		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, white, "GAME OVER", game->current_level + 1);
-	} else if (check_win_condition(game)) {
-		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2 - 9, TEXT_ALIGN_CENTER, white, "COMPLETED", game->current_level + 1);
-
-		draw_string_f(renderer, font, WINDOW_WIDTH / 2, WINDOW_HEIGHT - FONT_SIZE, TEXT_ALIGN_CENTER, white, "PRESS 'SPACE' TO SKIP");
 	}
 
-
-	s32 y = 5 + SMALL_FONT_SIZE;
-
 	if (false) {
+		s32 y = 5 + SMALL_FONT_SIZE;
 		for (u32 entity_index = 0; entity_index < game->entity_count; ++entity_index) {
 			const struct entity *entity = game->entities + entity_index;
 			draw_string_f(renderer, small_font, 5, y, TEXT_ALIGN_LEFT, white, "E (%u): HAS TARGET? %s [(%f, %f) * %f]", entity_index, entity->has_target ? "YES" : "NO", (f64)entity->target.x, (f64)entity->target.y, (f64)entity->pull_of_target);
@@ -3056,6 +3589,7 @@ render_game(struct game_state *game,
 	}
 
 	if (false) {
+		s32 y = 5 + SMALL_FONT_SIZE;
 		u32 visible_count = WINDOW_HEIGHT / TUNNEL_SEGMENT_THICKNESS;
 
 		for (u32 i = 0; i < visible_count; ++i) {
@@ -3077,7 +3611,12 @@ mix_audio(void *state, Uint8 *stream, int len)
 	u32 length = (u32)(len / 4);
 	f32 *s = (f32 *)(void *)stream;
 
-	/* play_track(game, 0); */
+	if (game->game_over)
+		play_track(game, 1);
+	else if (game->card_select_mode)
+		play_track(game, 2);
+	else
+		play_track(game, 0);
 
 	f32 global_t = (f32)(game->played_audio_sample_count) / AUDIO_FREQ;
 	u32 sound_index;
@@ -3134,7 +3673,7 @@ mix_audio(void *state, Uint8 *stream, int len)
 				break;
 			}
 
-			if (sound.fadeout && sound.fadeout_begin > global_t) {
+			if (sound.fadeout && sound.fadeout_begin > global_t && (sound.fadeout_end > sound.fadeout_begin)) {
 				f32 fade = (global_t - sound.fadeout_begin) / (sound.fadeout_end - sound.fadeout_begin);
 				w *= fade;
 			}
@@ -3230,16 +3769,10 @@ update_and_render()
 
 #endif
 
-		if (!game->game_over)
-			game->time = (f32)game->frame_index * (1.0f / 60);
+		game->time = (f32)game->frame_index * (1.0f / 60);
 
 		if (game->time > game->level_begin_t && game->skip_to_begin) {
 			game->skip_to_begin = false;
-			game->time_speed_up = 0;
-		}
-
-		if (game->time > game->level_end_t && game->skip_to_end) {
-			game->skip_to_end = false;
 			game->time_speed_up = 0;
 		}
 
@@ -3290,7 +3823,7 @@ read_entire_file(const char* filename, size_t *size_out)
     return result;
 }
 
-static u32
+static struct track *
 load_track(struct game_state *game, const char *filename)
 {
 	size_t track_data_size;
@@ -3299,6 +3832,7 @@ load_track(struct game_state *game, const char *filename)
 	u32 track_event_count = (u32)(track_data_size / 7);
 	u32 track_index = game->track_count++;
 	struct track *track = game->tracks + track_index;
+	track->tempo_inverse_scale = 1200;
 	track->event_count = track_event_count;
 	track->events = malloc(sizeof(struct track_event) * track_event_count);
 	for (u32 i = 0; i < track_event_count; ++i) {
@@ -3312,7 +3846,7 @@ load_track(struct game_state *game, const char *filename)
 	}
 	free(data);
 
-	return track_index;
+	return track;
 }
 
 int
@@ -3327,7 +3861,7 @@ main()
 #if defined(__EMSCRIPTEN__)
 	srand(emscripten_random() * RAND_MAX);
 #else
-	srand(time(0));
+	srand((u32)time(0));
 #endif
 
 	window_w = WINDOW_WIDTH;
@@ -3346,9 +3880,11 @@ main()
 		-1,
 		SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
+	/* SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN); */
+
 	SDL_GetRendererOutputSize(renderer, &renderer_w, &renderer_h);
 
-	printf("Render Size: %u, %u\n", renderer_w, renderer_h);
+	/* printf("Render Size: %u, %u\n", renderer_w, renderer_h); */
 
 	default_scale = (f32)renderer_w / (f32)window_w;
 	/* SDL_RenderSetScale(renderer, default_scale, default_scale); */
@@ -3363,6 +3899,9 @@ main()
 	goto_level(global_game, 0);
 
 	load_track(global_game, "track.imm");
+	load_track(global_game, "track-2.imm");
+	load_track(global_game, "track-3.imm")->tempo_inverse_scale = 600;
+	load_track(global_game, "track-4.imm");
 
 	ZERO_STRUCT(input);
 
