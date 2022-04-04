@@ -2501,6 +2501,7 @@ check_for_collisions_against_entities(struct game_state *game, struct entity_par
 						if (game->particles[owner.particle_index].type & PARTICLE_BULLET) {
 							if (other->id == game->player_id && game->shield_active && game->shield_energy > 0) {
 								spawn_debris(game, owner, 9, other_part->p, max_u(part->dmg, 10), false);
+								part->disposed = true;
 							} else {
 								if (other_part->hp > part->dmg)
 									other_part->hp -= part->dmg;
