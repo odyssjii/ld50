@@ -3955,7 +3955,7 @@ main()
 	SDL_PauseAudio(0);
 
 #if defined(__EMSCRIPTEN__)
-	emscripten_set_main_loop(update_and_render, 0, 1);
+	emscripten_set_main_loop(update_and_render, 60, 1);
 #else
 	while (!quit)
 		update_and_render();
